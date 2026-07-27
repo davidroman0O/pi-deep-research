@@ -13,7 +13,7 @@ sampling, `toolChoice` forced) against whatever model the user has active.
 ## Architecture
 
 ```
-dr_research(topic, budget)
+dr_research(topic, { profile: "standard" })
   │
   ├─ Phase 1  specification          tool call → research spec (objective, dimensions, freshness)
   ├─ Phase 2  decomposition          tool call → task graph (atomic subquestions, priorities)
@@ -40,13 +40,27 @@ dr_research(topic, budget)
   │                                  quality, directness, consistency, recency,
   │                                  − contradiction, − assumption sensitivity)
   ├─ Phase 6b topic syntheses        per-dimension conclusions (tool call)
-  ├─ Phase 7  synthesis              evidence-constrained report writer; claims carry
-  │                                  explicit "cite as [n]" source tokens
-  └─ Phase 8  audits                 citation entailment (per cited sentence, matched
-                                     to the source's best evidence quotes) + 8 static
-                                     audits (coverage, claim, contradiction, freshness,
-                                     numerical, source diversity, leakage, safety)
+  ├─ Phase 6c numeric normalization  comparison tables, exact conversions only,
+  │                                  incomparable rows flagged (§18)
+  ├─ Phase 7  sectioned synthesis    outline (tool call) → parallel section drafts
+  │                                  with per-section evidence bundles (§21.1) →
+  │                                  exec summary → assemble
+  └─ Phase 8  audits + repair        citation entailment (per cited sentence) →
+                                     citation repair (re-cite or hedge, §22.1) +
+                                     8 static audits (coverage, claim, contradiction,
+                                     freshness, numerical, source diversity, leakage, safety)
 ```
+
+### Depth profiles
+
+| Profile | Sources | Iterations | Queries/task | Report scale |
+|---------|---------|-----------|--------------|--------------|
+| `quick` | ~10 | 4 | 3 | short brief |
+| `standard` | ~25 | 12 | 4 | full report (default) |
+| `deep` | ~40 | 20 | 5 | long-form, 8-13 sections |
+| `heavy` | ~60 | 30 | 6 | maximal — rivals paid DR products |
+
+Explicit params (`breadth`, `max_sources`, …) override the preset.
 
 ### Memory tiers (on disk, `.pi/research/<runId>/`)
 

@@ -461,12 +461,15 @@ export async function runResearch(
 			.join("\n");
 		const synthesesDigest = syntheses.map((s) => `### ${s.dimension} [${s.confidence}]\n${s.synthesis}`).join("\n");
 
-		const { sections } = await llmJson<{ sections: Array<{ title: string; objective: string; claim_ids: string[] }> }>(
+		const { sections: rawSections } = await llmJson<{ sections: Array<{ title: string; objective: string; claim_ids: string[] }> }>(
 			deps.handle, OUTLINE_TOOL, OUTLINE_SYSTEM,
 			outlinePrompt(meta.spec, claimsDigest, synthesesDigest),
 			{ signal: deps.signal, temperature: 0.4 },
 		);
-		await store.saveOutline({ sections, created_at: new Date().toISOString() });
+		// The executive summary is generated separately after drafting — drop any
+		// outline section that tries to write one (otherwise it appears twice).
+		const sections = rawSections.filter((s) => !/executive\s+summary/i.test(s.title));
+		await store.saveOutline({ sections, dropped: rawSections.length - sections.length, created_at: new Date().toISOString() });
 
 		// Per-section drafting in parallel (bounded) — each section gets its own
 		// evidence bundle: citation-ready claims + counterevidence + assumptions.
@@ -500,7 +503,12 @@ export async function runResearch(
 			deps.signal,
 		);
 
-		const writtenSections = successes(sectionDrafts);
+		// Canonical headings: strip whatever heading the drafter chose and impose
+		// the outline's own — guarantees one heading per section, no duplicates.
+		const writtenSections = successes(sectionDrafts).map(({ section, draft }) => ({
+			section,
+			text: `## ${section.title}\n\n${stripLeadingHeadings(draft).trim()}`,
+		}));
 		progress("Writing executive summary…");
 		const execSummary = await llmText(
 			deps.handle, EXEC_SUMMARY_SYSTEM,
@@ -519,8 +527,8 @@ export async function runResearch(
 		const report =
 			`# ${meta.spec.objective}\n\n` +
 			`**Research date:** ${new Date().toISOString().slice(0, 10)} · **Sources analyzed:** ${sources.length} · **Evidence records:** ${allEvidence.length} · **Verified claims:** ${claims.length}\n\n---\n\n` +
-			`## Executive Summary\n\n${execSummary}\n\n---\n\n` +
-			writtenSections.map((s) => s.draft.trim()).join("\n\n---\n\n") +
+			`## Executive Summary\n\n${stripLeadingHeadings(execSummary).trim()}\n\n---\n\n` +
+			writtenSections.map((s) => s.text).join("\n\n---\n\n") +
 			contradictionNote +
 			`\n\n## Sources\n\n${srcList}\n`;
 
@@ -725,6 +733,12 @@ function prioritizePairs(claims: Claim[]): Array<[Claim, Claim]> {
 	}
 	pairs.sort((x, y) => y[2] - x[2]);
 	return pairs.map(([a, b]) => [a, b]);
+}
+
+// ── helpers ──────────────────────────────────────────────────────────────
+/** Remove leading markdown heading lines from a draft (the assembler imposes canonical ones). */
+function stripLeadingHeadings(text: string): string {
+	return text.replace(/^(?:#{1,4}\s+[^\n]*\n+)+/, "");
 }
 
 function hostOf(url: string): string {
