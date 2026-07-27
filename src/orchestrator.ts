@@ -572,8 +572,23 @@ export async function runResearch(
 			);
 			let repaired = 0;
 			const keptSentences = new Set<string>();
+			// The repair model paraphrases prefixes — match on normalized token
+			// overlap instead of exact substring.
+			const toks = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 3));
+			const matchFailure = (prefix: string) => {
+				const pt = toks(prefix);
+				let best: { f: (typeof citationAudit.failures)[0]; score: number } | null = null;
+				for (const f of citationAudit.failures) {
+					const ft = toks(f.sentence);
+					let shared = 0;
+					for (const t of pt) if (ft.has(t)) shared++;
+					const score = shared / Math.max(1, pt.size);
+					if (!best || score > best.score) best = { f, score };
+				}
+				return best && best.score >= 0.5 ? best.f : undefined;
+			};
 			for (const rep of repairs) {
-				const failure = citationAudit.failures.find((f) => f.sentence.startsWith(rep.sentence_prefix.slice(0, 30)) || f.sentence.includes(rep.sentence_prefix.slice(0, 30)));
+				const failure = matchFailure(rep.sentence_prefix);
 				if (!failure) continue;
 				if (rep.action === "recite" && rep.new_citation && rep.new_citation <= sources.length) {
 					const next = swapLastCitation(failure.raw, failure.citationNum, `[${rep.new_citation}]`);

@@ -42,7 +42,9 @@ export function extractCitedSentences(report: string): SentenceCitation[] {
 	const body = report.split(/^## Sources/m)[0] ?? report;
 	const out: SentenceCitation[] = [];
 	for (const line of body.split("\n")) {
-		const clean = line.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
+		// skip table rows and headings — they're structure, not prose sentences
+		if (/^\s*\|/.test(line) || /^#{1,4}\s/.test(line)) continue;
+		const clean = line.replace(/\*\*/g, "").trim();
 		if (clean.length < 30) continue;
 		for (const m of clean.matchAll(/\[(\d+)\]/g)) {
 			out.push({ sentence: clean, raw: line, citationNum: Number(m[1]) });
