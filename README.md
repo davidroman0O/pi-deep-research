@@ -53,14 +53,15 @@ dr_research(topic, { profile: "standard" })
 
 ### Depth profiles
 
-| Profile | Sources | Iterations | Queries/task | Report scale |
-|---------|---------|-----------|--------------|--------------|
-| `quick` | ~10 | 4 | 3 | short brief |
-| `standard` | ~25 | 12 | 4 | full report (default) |
-| `deep` | ~40 | 20 | 5 | long-form, 8-13 sections |
-| `heavy` | ~60 | 30 | 6 | maximal — rivals paid DR products |
+| Profile | Sources | Iterations | Queries/task | Citation checks | Report scale |
+|---------|---------|-----------|--------------|-----------------|--------------|
+| `quick` | ~10 | 4 | 3 | 12 | short brief |
+| `standard` | ~25 | 12 | 4 | 25 | full report (default) |
+| `deep` | ~40 | 20 | 5 | 30 | long-form, 8-13 sections |
+| `heavy` | ~60 | 30 | 6 | 40 | maximal — rivals paid DR products |
+| `ultra` | ~100 | 40 | 8 | 50 | beyond paid DR heavy — longest, strictest |
 
-Explicit params (`breadth`, `max_sources`, …) override the preset.
+Explicit params (`breadth`, `max_sources`, `citation_checks`, …) override the preset.
 
 ### Memory tiers (on disk, `.pi/research/<runId>/`)
 

@@ -11,7 +11,9 @@ import type { Claim, ClaimEdge, Evidence, Source, Spec, Task } from "./store.ts"
 
 export interface CitationFailure {
 	sentence: string;
+	raw: string; // original report line — repair replacements match against this
 	citation: string;
+	citationNum: number;
 	problem: string;
 }
 
@@ -31,6 +33,7 @@ export interface AuditReport {
 // ── citation extraction ──────────────────────────────────────────────────
 interface SentenceCitation {
 	sentence: string;
+	raw: string;
 	citationNum: number;
 }
 
@@ -42,7 +45,7 @@ export function extractCitedSentences(report: string): SentenceCitation[] {
 		const clean = line.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim();
 		if (clean.length < 30) continue;
 		for (const m of clean.matchAll(/\[(\d+)\]/g)) {
-			out.push({ sentence: clean, citationNum: Number(m[1]) });
+			out.push({ sentence: clean, raw: line, citationNum: Number(m[1]) });
 		}
 	}
 	return out;
@@ -55,7 +58,7 @@ export async function auditCitations(
 	sources: Source[],
 	evidence: Evidence[],
 	signal?: AbortSignal,
-	maxChecks = 12,
+	maxChecks = 25,
 ): Promise<{ checked: number; failures: CitationFailure[] }> {
 	const cited = extractCitedSentences(report).slice(0, maxChecks);
 	const failures: CitationFailure[] = [];
@@ -63,7 +66,7 @@ export async function auditCitations(
 	for (const sc of cited) {
 		const src = sources[sc.citationNum - 1];
 		if (!src) {
-			failures.push({ sentence: sc.sentence, citation: `[${sc.citationNum}]`, problem: "citation index has no matching source" });
+			failures.push({ sentence: sc.sentence, raw: sc.raw, citation: `[${sc.citationNum}]`, citationNum: sc.citationNum, problem: "citation index has no matching source" });
 			continue;
 		}
 		// Match the sentence against ALL of the cited source's evidence and pick
@@ -72,7 +75,7 @@ export async function auditCitations(
 		const srcEvidence = evidence.filter((e) => e.source_id === src.id && e.quote);
 		if (srcEvidence.length === 0) {
 			// no evidence recorded from this source — citation is unsupportable
-			failures.push({ sentence: sc.sentence, citation: `[${sc.citationNum}]`, problem: "no extracted evidence backs this source citation" });
+			failures.push({ sentence: sc.sentence, raw: sc.raw, citation: `[${sc.citationNum}]`, citationNum: sc.citationNum, problem: "no extracted evidence backs this source citation" });
 			continue;
 		}
 		checked++;
@@ -87,7 +90,7 @@ export async function auditCitations(
 			{ signal, temperature: 0 },
 		);
 		if (!verdict.entailed) {
-			failures.push({ sentence: sc.sentence, citation: `[${sc.citationNum}]`, problem: verdict.problem ?? "not entailed" });
+			failures.push({ sentence: sc.sentence, raw: sc.raw, citation: `[${sc.citationNum}]`, citationNum: sc.citationNum, problem: verdict.problem ?? "not entailed" });
 		}
 	}
 	return { checked, failures };

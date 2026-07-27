@@ -43,14 +43,15 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			topic: Type.String({ description: "The research question to investigate in depth." }),
 			profile: Type.Optional(
-				Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep"), Type.Literal("heavy")], {
-					description: "Depth preset: quick (~10 sources), standard (default), deep (~40 sources), heavy (~60 sources, longest, most detailed report). Explicit params below override the preset.",
+				Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep"), Type.Literal("heavy"), Type.Literal("ultra")], {
+					description: "Depth preset: quick (~10 sources), standard (default), deep (~40 sources), heavy (~60 sources), ultra (~100 sources — maximal length and audit rigor). Explicit params below override the preset.",
 				}),
 			),
 			breadth: Type.Optional(Type.Integer({ description: "Sources per search round (default 5)." })),
 			depth: Type.Optional(Type.Integer({ description: "Max follow-up depth for gap subquestions (default 2)." })),
 			max_sources: Type.Optional(Type.Integer({ description: "Hard cap on ingested sources (default 25)." })),
 			max_iterations: Type.Optional(Type.Integer({ description: "Hard cap on loop iterations (default 12)." })),
+			citation_checks: Type.Optional(Type.Integer({ description: "How many cited sentences get an LLM entailment check (default 25; raise for long reports)." })),
 			resume: Type.Optional(Type.Boolean({ description: "Resume an interrupted run (uses run_id or latest)." })),
 			run_id: Type.Optional(Type.String({ description: "Run id to resume." })),
 		}),
@@ -60,6 +61,7 @@ export default function (pi: ExtensionAPI) {
 			if (p.depth != null) config.depth = p.depth;
 			if (p.max_sources != null) config.max_sources = p.max_sources;
 			if (p.max_iterations != null) config.max_iterations = p.max_iterations;
+			if (p.citation_checks != null) config.citation_checks = p.citation_checks;
 
 			let resumeId: string | undefined = p.run_id;
 			if (p.resume && !resumeId) {

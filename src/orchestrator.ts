@@ -53,6 +53,7 @@ import {
 	RELATION_SYSTEM, relationPrompt, RELATION_TOOL,
 	TOPIC_SYNTH_SYSTEM, topicSynthPrompt, TOPIC_SYNTH_TOOL,
 	NUMERIC_SYSTEM, numericPrompt, NUMERIC_TOOL,
+	SCENARIO_SYSTEM, scenarioPrompt, SCENARIO_TOOL,
 	OUTLINE_SYSTEM, outlinePrompt, OUTLINE_TOOL,
 	SECTION_SYSTEM, sectionPrompt,
 	EXEC_SUMMARY_SYSTEM, execSummaryPrompt,
@@ -451,6 +452,24 @@ export async function runResearch(
 					})
 					.join("\n\n");
 		}
+
+		// ── Phase 6d: scenario modeling (§18) ──────────────────────────────
+		let scenarioSection = "";
+		if (valueClaims.length >= 3 && /\d{4}|20\d\d|horizon|projection|future|2030|2040|2050/i.test(meta.spec.time_horizon ?? "2035")) {
+			checkAbort();
+			progress("Modeling scenarios…");
+			const sc = await llmJson<{ metric: string; base_value: string; scenarios: Array<{ name: string; assumption: string; projections: Array<{ year: string; value: string }> }> }>(
+				deps.handle, SCENARIO_TOOL, SCENARIO_SYSTEM,
+				scenarioPrompt(meta.spec, valueClaims, meta.spec.time_horizon ?? "2035"),
+				{ signal: deps.signal, temperature: 0.3 },
+			);
+			const years = [...new Set(sc.scenarios.flatMap((s) => s.projections.map((p) => p.year)))].sort();
+			const header = `| Scenario | Assumption | ${years.join(" | ")} |\n|---|---|${years.map(() => "---").join("|")}|`;
+			const body = sc.scenarios
+				.map((s) => `| ${s.name} | ${s.assumption} | ${years.map((y) => s.projections.find((p) => p.year === y)?.value ?? "—").join(" | ")} |`)
+				.join("\n");
+			scenarioSection = `\n\n## Scenario Model: ${sc.metric}\n\n**Base estimate:** ${sc.base_value}\n\n${header}\n${body}\n`;
+		}
 		checkAbort();
 		progress("Designing report outline…");
 		const claimsDigest = claims
@@ -535,7 +554,7 @@ export async function runResearch(
 		// ── Phase 8: audits + citation repair (§22.1) ────────────────────────
 		checkAbort();
 		progress("Running citation + quality audits…");
-		const citationAudit = await auditCitations(deps.handle, report, sources, allEvidence, deps.signal);
+		const citationAudit = await auditCitations(deps.handle, report, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
 
 		// repair pass: re-cite or hedge failed citations instead of just flagging
 		let finalReport = report;
@@ -557,11 +576,17 @@ export async function runResearch(
 				const failure = citationAudit.failures.find((f) => f.sentence.startsWith(rep.sentence_prefix.slice(0, 30)) || f.sentence.includes(rep.sentence_prefix.slice(0, 30)));
 				if (!failure) continue;
 				if (rep.action === "recite" && rep.new_citation && rep.new_citation <= sources.length) {
-					finalReport = finalReport.replace(failure.sentence + failure.citation, failure.sentence + `[${rep.new_citation}]`);
-					repaired++;
+					const next = swapLastCitation(failure.raw, failure.citationNum, `[${rep.new_citation}]`);
+					if (next && finalReport.includes(failure.raw)) {
+						finalReport = finalReport.replace(failure.raw, next);
+						repaired++;
+					}
 				} else if (rep.action === "drop_citation") {
-					finalReport = finalReport.replace(failure.sentence + failure.citation, failure.sentence + " (inference — no direct source)");
-					repaired++;
+					const next = swapLastCitation(failure.raw, failure.citationNum, "(inference — no direct source)");
+					if (next && finalReport.includes(failure.raw)) {
+						finalReport = finalReport.replace(failure.raw, next);
+						repaired++;
+					}
 				} else if (rep.action === "keep") {
 					// reviewer judged the flag a false positive — downgrade to reviewed
 					keptSentences.add(failure.sentence);
@@ -591,12 +616,35 @@ export async function runResearch(
 		const auditNote = audit.overall_pass ? "" : `\n\n---\n\n## Audit warnings\n${renderAuditWarnings(audit)}`;
 		// numeric tables belong before the Sources list, not after it
 		let assembled = finalReport;
-		if (numericSection) {
+		if (numericSection || scenarioSection) {
+			const insert = numericSection + scenarioSection;
 			assembled = /\n## Sources/.test(assembled)
-				? assembled.replace(/\n## Sources/, numericSection + "\n\n## Sources")
-				: assembled + numericSection;
+				? assembled.replace(/\n## Sources/, insert + "\n\n## Sources")
+				: assembled + insert;
 		}
-		await store.saveReport(assembled + auditNote);
+
+		// Citation map appendix (§22 reverse map: claim → source → verbatim quote)
+		const citationMap =
+			"\n\n## Citation Map\n\n_Each source with the verbatim evidence quotes extracted from it — passage-level traceability for every citation._\n" +
+			sources
+				.map((s, i) => {
+					const quotes = allEvidence.filter((e) => e.source_id === s.id && e.quote).slice(0, 5);
+					if (quotes.length === 0) return "";
+					return `\n### [${i + 1}] ${s.title}\n${quotes.map((q) => `> "${q.quote}" — *supports: ${q.claim}*`).join("\n")}`;
+				})
+				.filter(Boolean)
+				.join("\n");
+
+		// Methodology disclosure (mechanical — DR-heavy-style transparency)
+		const methodology =
+			`\n\n## Methodology\n\n` +
+			`- **Pipeline:** specification → task graph → ${meta.stats.iterations} research iterations (${meta.stats.searches} searches) → evidence extraction → claim graph → sectioned synthesis → citation + quality audits\n` +
+			`- **Sources:** ${sources.length} ingested (${sources.map((s) => s.publisher).filter((v, i, a) => a.indexOf(v) === i).length} distinct publishers), ${allEvidence.length} evidence records, ${claims.length} verified claims, ${edges.length} relations (${contradictions.length} contradictions)\n` +
+			`- **Model:** ${meta.model ?? "session model"} · **Run:** ${runId}\n` +
+			`- **Audits:** citation entailment (${audit.citation_audit.checked} checked, ${audit.citation_audit.failures.length} unresolved), coverage ${audit.coverage.pass ? "pass" : "partial"}, source diversity ${(audit.source_diversity.dominant_share * 100).toFixed(0)}% max publisher share\n` +
+			(meta.stats.sources_ingested >= meta.config.max_sources ? `- **Budget note:** source cap reached — deeper coverage available with a higher max_sources/profile.\n` : "");
+
+		await store.saveReport(assembled + citationMap + methodology + auditNote);
 
 		meta.status = "completed";
 		await store.saveMeta(meta);
@@ -606,7 +654,7 @@ export async function runResearch(
 
 		return {
 			runId,
-			report: assembled + auditNote,
+			report: assembled + citationMap + methodology + auditNote,
 			meta,
 			sources,
 			evidence: allEvidence,
@@ -756,6 +804,14 @@ function prioritizePairs(claims: Claim[]): Array<[Claim, Claim]> {
 /** Remove leading markdown heading lines from a draft (the assembler imposes canonical ones). */
 function stripLeadingHeadings(text: string): string {
 	return text.replace(/^(?:#{1,4}\s+[^\n]*\n+)+/, "");
+}
+
+/** Swap the LAST [oldN] citation in a report line; null when the citation is absent. */
+export function swapLastCitation(raw: string, oldN: number, replacement: string): string | null {
+	const needle = `[${oldN}]`;
+	const idx = raw.lastIndexOf(needle);
+	if (idx < 0) return null;
+	return raw.slice(0, idx) + replacement + raw.slice(idx + needle.length);
 }
 
 function hostOf(url: string): string {

@@ -346,6 +346,43 @@ export const NUMERIC_TOOL = {
 	}),
 };
 
+// ── Phase 6d: scenario modeling (§18) ────────────────────────────────────
+export const SCENARIO_SYSTEM = controlPlane(
+	"scenario",
+	`Your sole directive is to model future scenarios from the verified numeric claims. Pick the pivotal uncertainty (learning rate, escalation, schedule slip) and project the central metric under 3 named scenarios (e.g. conservative/base/optimistic). Every scenario must be derived from evidence-stated parameters — never invent rates. State the assumption behind each scenario in one line.`,
+);
+
+export function scenarioPrompt(spec: Spec, valueClaims: string, timeHorizon: string): string {
+	return `<research_objective>${spec.objective}</research_objective>
+<time_horizon>${timeHorizon}</time_horizon>
+
+<numeric_claims>
+${valueClaims}
+</numeric_claims>
+
+Submit the scenario model via the tool.`;
+}
+
+export const SCENARIO_TOOL = {
+	name: "submit_scenarios",
+	description: "Submit a 3-scenario projection of the pivotal metric.",
+	parameters: Type.Object({
+		metric: Type.String({ description: "the metric being projected" }),
+		base_value: Type.String({ description: "current/central estimate with unit and basis" }),
+		scenarios: Type.Array(
+			Type.Object({
+				name: Type.String({ description: "e.g. 'conservative (0% learning)'" }),
+				assumption: Type.String({ description: "evidence-stated parameter driving this scenario" }),
+				projections: Type.Array(
+					Type.Object({ year: Type.String(), value: Type.String() }),
+					{ description: "value at milestone years within the horizon" },
+				),
+			}),
+			{ minItems: 3, maxItems: 3 },
+		),
+	}),
+};
+
 // ── Phase 8b: citation repair (§22.1) ────────────────────────────────────
 export const CITATION_REPAIR_SYSTEM = controlPlane(
 	"citation_repair",

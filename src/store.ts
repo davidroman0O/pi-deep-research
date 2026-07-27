@@ -126,6 +126,7 @@ export interface ResearchConfig {
 	max_sources: number; // hard cap on ingested sources
 	max_iterations: number; // hard cap on loop iterations
 	max_search_queries: number; // queries generated per task
+	citation_checks?: number; // entailment-audit sample size (default 25)
 }
 
 export const DEFAULT_CONFIG: ResearchConfig = {
@@ -138,10 +139,11 @@ export const DEFAULT_CONFIG: ResearchConfig = {
 
 /** Depth profiles — user-facing scale knobs (liberation from fixed budgets). */
 export const PROFILES: Record<string, Partial<ResearchConfig>> = {
-	quick: { breadth: 4, max_sources: 10, max_iterations: 4, max_search_queries: 3, depth: 1 },
+	quick: { breadth: 4, max_sources: 10, max_iterations: 4, max_search_queries: 3, depth: 1, citation_checks: 12 },
 	standard: {},
-	deep: { breadth: 6, max_sources: 40, max_iterations: 20, max_search_queries: 5, depth: 3 },
-	heavy: { breadth: 8, max_sources: 60, max_iterations: 30, max_search_queries: 6, depth: 4 },
+	deep: { breadth: 6, max_sources: 40, max_iterations: 20, max_search_queries: 5, depth: 3, citation_checks: 30 },
+	heavy: { breadth: 8, max_sources: 60, max_iterations: 30, max_search_queries: 6, depth: 4, citation_checks: 40 },
+	ultra: { breadth: 10, max_sources: 100, max_iterations: 40, max_search_queries: 8, depth: 5, citation_checks: 50 },
 };
 
 export class RunStore {
