@@ -90,30 +90,53 @@ export async function llmJson<T = unknown>(
 		maxRetries: 2,
 	};
 
-	let msg: Awaited<ReturnType<typeof complete>>;
-	try {
-		msg = await complete(model, context, { ...baseOptions, toolChoice } as Record<string, unknown>);
-	} catch (err) {
-		if (!/tool_choice|incompatible with thinking/i.test(String(err))) throw err;
-		msg = await complete(model, context, { ...baseOptions, toolChoice: "auto" } as Record<string, unknown>);
-	}
-	// Providers report some failures in-band (stopReason=error), not as throws.
-	// Thinking-enabled endpoints reject forced tool_choice this way — retry once
-	// with "auto" (still tool-call semantics, just unforced).
-	if (msg.stopReason === "error") {
-		const errText = (msg as { errorMessage?: string }).errorMessage ?? "";
-		if (/tool_choice|incompatible with thinking/i.test(errText)) {
-			msg = await complete(model, context, { ...baseOptions, toolChoice: "auto" } as Record<string, unknown>);
+	// Robust retry: any thrown or in-band stopReason=error is retried with
+	// backoff. The thinking/tool_choice incompatibility degrades toolChoice to
+	// "auto" on retry (still tool-call semantics, just unforced). Transient
+	// flakes (529/timeout/server hiccup) get a plain retry. A long research run
+	// spans dozens of calls — one transient must not kill the whole pipeline.
+	const MAX_CALL_ATTEMPTS = 4;
+	let msg: Awaited<ReturnType<typeof complete>> | undefined;
+	let lastErr = "";
+	for (let attempt = 0; attempt < MAX_CALL_ATTEMPTS; attempt++) {
+		checkAbort(opts.signal);
+		const choice = /tool_choice|incompatible with thinking/i.test(lastErr) ? "auto" : toolChoice;
+		try {
+			msg = await complete(model, context, { ...baseOptions, toolChoice: choice } as Record<string, unknown>);
+		} catch (err) {
+			lastErr = String(err);
+			await backoff(attempt, opts.signal);
+			continue;
 		}
+		if (msg.stopReason !== "error") break;
+		lastErr = (msg as { errorMessage?: string }).errorMessage ?? "";
+		await backoff(attempt, opts.signal);
 	}
+	if (!msg) throw new Error(`Provider ${model.provider} failed after ${MAX_CALL_ATTEMPTS} attempts: ${lastErr}`);
 
 	const toolCall = (msg.content ?? []).find((b): b is ToolCall => typeof b === "object" && b.type === "toolCall");
 	if (!toolCall) {
 		throw new Error(
-			`Provider ${model.provider} returned no tool call for '${tool.name}' (stopReason=${msg.stopReason}). The tool schema is the contract — nothing to parse.`,
+			`Provider ${model.provider} returned no tool call for '${tool.name}' (stopReason=${msg.stopReason}${lastErr ? `, ${lastErr.slice(0, 120)}` : ""}). The tool schema is the contract — nothing to parse.`,
 		);
 	}
 	return toolCall.arguments as T;
+}
+
+function checkAbort(signal?: AbortSignal) {
+	if (signal?.aborted) {
+		const err = new Error("aborted") as Error & { aborted?: true };
+		err.aborted = true;
+		throw err;
+	}
+}
+
+async function backoff(attempt: number, signal?: AbortSignal) {
+	const ms = Math.min(8000, 500 * 2 ** attempt) + Math.random() * 250;
+	await new Promise<void>((resolve) => {
+		const t = setTimeout(resolve, ms);
+		signal?.addEventListener("abort", () => { clearTimeout(t); resolve(); }, { once: true });
+	});
 }
 
 /** Run a single model call and return raw text (for the final report). */
@@ -129,16 +152,33 @@ export async function llmText(
 		systemPrompt,
 		messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
 	};
-	const msg = await complete(model, context, {
-		apiKey: auth?.apiKey,
-		headers: auth?.headers,
-		env: auth?.env,
-		signal: opts.signal,
-		temperature: opts.temperature,
-		maxTokens: opts.maxTokens,
-		timeoutMs: opts.timeoutMs,
-		maxRetries: 2,
-	});
+	// Same retry discipline as llmJson: a transient stopReason=error must not
+	// kill a multi-minute run.
+	let msg: Awaited<ReturnType<typeof complete>> | undefined;
+	let lastErr = "";
+	for (let attempt = 0; attempt < 4; attempt++) {
+		checkAbort(opts.signal);
+		try {
+			msg = await complete(model, context, {
+				apiKey: auth?.apiKey,
+				headers: auth?.headers,
+				env: auth?.env,
+				signal: opts.signal,
+				temperature: opts.temperature,
+				maxTokens: opts.maxTokens,
+				timeoutMs: opts.timeoutMs,
+				maxRetries: 2,
+			});
+		} catch (err) {
+			lastErr = String(err);
+			await backoff(attempt, opts.signal);
+			continue;
+		}
+		if (msg.stopReason !== "error") break;
+		lastErr = (msg as { errorMessage?: string }).errorMessage ?? "";
+		await backoff(attempt, opts.signal);
+	}
+	if (!msg) throw new Error(`Provider ${model.provider} failed after 4 attempts: ${lastErr}`);
 	return (msg.content ?? [])
 		.filter((b): b is { type: "text"; text: string } => typeof b === "object" && b.type === "text")
 		.map((b) => b.text)
