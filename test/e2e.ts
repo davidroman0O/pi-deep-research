@@ -82,7 +82,7 @@ const result = await runResearch(
 	{
 		cwd,
 		handle,
-		config: { breadth: 3, max_sources: 6, max_iterations: 3, max_search_queries: 2, depth: 1 },
+		config: { breadth: 3, max_sources: 6, max_iterations: 3, max_search_queries: 2, depth: 1, citation_checks: 8 },
 		onProgress: (line) => console.log(`   ▸ ${line}`),
 	},
 );
