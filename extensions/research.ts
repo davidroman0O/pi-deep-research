@@ -10,7 +10,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { join } from "node:path";
 import { runResearch } from "../src/orchestrator.ts";
-import { RunStore, type ResearchConfig } from "../src/store.ts";
+import { RunStore, PROFILES, type ResearchConfig } from "../src/store.ts";
 import { getConfig, saveConfig, backendStatus, type DrConfig } from "../src/config.ts";
 import type { ModelHandle } from "../src/llm.ts";
 
@@ -42,6 +42,11 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Run a deep-research investigation on a topic",
 		parameters: Type.Object({
 			topic: Type.String({ description: "The research question to investigate in depth." }),
+			profile: Type.Optional(
+				Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep"), Type.Literal("heavy")], {
+					description: "Depth preset: quick (~10 sources), standard (default), deep (~40 sources), heavy (~60 sources, longest, most detailed report). Explicit params below override the preset.",
+				}),
+			),
 			breadth: Type.Optional(Type.Integer({ description: "Sources per search round (default 5)." })),
 			depth: Type.Optional(Type.Integer({ description: "Max follow-up depth for gap subquestions (default 2)." })),
 			max_sources: Type.Optional(Type.Integer({ description: "Hard cap on ingested sources (default 25)." })),
@@ -50,7 +55,7 @@ export default function (pi: ExtensionAPI) {
 			run_id: Type.Optional(Type.String({ description: "Run id to resume." })),
 		}),
 		async execute(_id, p, signal, onUpdate, ctx) {
-			const config: Partial<ResearchConfig> = {};
+			const config: Partial<ResearchConfig> = { ...(PROFILES[p.profile ?? "standard"] ?? {}) };
 			if (p.breadth != null) config.breadth = p.breadth;
 			if (p.depth != null) config.depth = p.depth;
 			if (p.max_sources != null) config.max_sources = p.max_sources;

@@ -52,7 +52,9 @@ import {
 	GAP_SYSTEM, gapPrompt, GAP_TOOL,
 	RELATION_SYSTEM, relationPrompt, RELATION_TOOL,
 	TOPIC_SYNTH_SYSTEM, topicSynthPrompt, TOPIC_SYNTH_TOOL,
-	SYNTHESIZE_SYSTEM, synthesizePrompt,
+	OUTLINE_SYSTEM, outlinePrompt, OUTLINE_TOOL,
+	SECTION_SYSTEM, sectionPrompt,
+	EXEC_SUMMARY_SYSTEM, execSummaryPrompt,
 } from "./prompts.ts";
 
 export interface OrchestratorDeps {
@@ -414,30 +416,79 @@ export async function runResearch(
 			{ signal: deps.signal, temperature: 0.3 },
 		);
 
-		// ── Phase 7: synthesis ─────────────────────────────────────────────
+		// ── Phase 7: sectioned synthesis (§21.1) ─────────────────────────────
 		checkAbort();
-		progress("Writing report…");
+		progress("Designing report outline…");
 		const claimsDigest = claims
 			.map((c, i) => {
 				const srcNums = c.source_ids.map((sid) => sources.findIndex((s) => s.id === sid) + 1).filter((n) => n > 0);
 				return `C${i + 1} [${c.status}, conf ${c.confidence.toFixed(2)}] ${c.text} | cite as: ${srcNums.map((n) => `[${n}]`).join(" ")} | assumptions: ${c.assumptions.join("; ") || "none"}`;
 			})
 			.join("\n");
-		const contradictionDigest =
-			contradictions.length > 0
-				? "\n\nCONTRADICTIONS TO RESOLVE IN REPORT:\n" +
-					contradictions
-						.map((e) => `- ${claims.find((c) => c.id === e.from)?.text}  ⟷  ${claims.find((c) => c.id === e.to)?.text} (${e.reason ?? ""})`)
-						.join("\n")
-				: "";
-		const topicDigest = "\n\nPER-DIMENSION SYNTHESES (use as section skeletons):\n" +
-			syntheses.map((s) => `### ${s.dimension} [${s.confidence}]\n${s.synthesis}`).join("\n");
+		const synthesesDigest = syntheses.map((s) => `### ${s.dimension} [${s.confidence}]\n${s.synthesis}`).join("\n");
 
-		const report = await llmText(
-			deps.handle, SYNTHESIZE_SYSTEM,
-			synthesizePrompt(meta.spec, claimsDigest + contradictionDigest + topicDigest, sources),
-			{ signal: deps.signal, temperature: 0.4, maxTokens: 8000, timeoutMs: 180_000 },
+		const { sections } = await llmJson<{ sections: Array<{ title: string; objective: string; claim_ids: string[] }> }>(
+			deps.handle, OUTLINE_TOOL, OUTLINE_SYSTEM,
+			outlinePrompt(meta.spec, claimsDigest, synthesesDigest),
+			{ signal: deps.signal, temperature: 0.4 },
 		);
+		await store.saveOutline({ sections, created_at: new Date().toISOString() });
+
+		// Per-section drafting in parallel (bounded) — each section gets its own
+		// evidence bundle: citation-ready claims + counterevidence + assumptions.
+		progress(`Drafting ${sections.length} sections in parallel…`);
+		const sectionDrafts = await runParallel(
+			sections,
+			async (section) => {
+				const sectionClaims = section.claim_ids
+					.map((id) => claims[Number(id.replace(/^C/i, "")) - 1])
+					.filter((c): c is Claim => !!c && c.citation_ready);
+				const bundle = sectionClaims
+					.map((c, i) => {
+						const globalIdx = claims.indexOf(c) + 1;
+						const srcNums = c.source_ids.map((sid) => sources.findIndex((s) => s.id === sid) + 1).filter((n) => n > 0);
+						return `C${globalIdx} [${c.status}, conf ${c.confidence.toFixed(2)}] ${c.text} | cite as: ${srcNums.map((n) => `[${n}]`).join(" ")}`;
+					})
+					.join("\n");
+				const assumptions = sectionClaims
+					.flatMap((c) => c.assumptions)
+					.filter((a, i, arr) => arr.indexOf(a) === i)
+					.map((a) => `- ${a}`)
+					.join("\n") || "(none)";
+				const draft = await llmText(
+					deps.handle, SECTION_SYSTEM,
+					sectionPrompt(meta.spec!, section, bundle || "(no citation-ready claims — state this gap)", assumptions),
+					{ signal: deps.signal, temperature: 0.4, maxTokens: 4000, timeoutMs: 180_000 },
+				);
+				return { section, draft };
+			},
+			2,
+			deps.signal,
+		);
+
+		const writtenSections = successes(sectionDrafts);
+		progress("Writing executive summary…");
+		const execSummary = await llmText(
+			deps.handle, EXEC_SUMMARY_SYSTEM,
+			execSummaryPrompt(meta.spec, sections.map((s) => s.title), synthesesDigest),
+			{ signal: deps.signal, temperature: 0.3, maxTokens: 1500, timeoutMs: 120_000 },
+		);
+
+		// Assemble: title → exec summary → sections → sources
+		const srcList = sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.url}${s.date ? ` (${s.date})` : ""}`).join("\n");
+		const contradictionNote =
+			contradictions.length > 0
+				? `\n\n## Contradictions Detected\n\n${contradictions
+						.map((e) => `- **${claims.find((c) => c.id === e.from)?.text}** vs **${claims.find((c) => c.id === e.to)?.text}** — ${e.reason ?? "unresolved"}`)
+						.join("\n")}\n`
+				: "";
+		const report =
+			`# ${meta.spec.objective}\n\n` +
+			`**Research date:** ${new Date().toISOString().slice(0, 10)} · **Sources analyzed:** ${sources.length} · **Evidence records:** ${allEvidence.length} · **Verified claims:** ${claims.length}\n\n---\n\n` +
+			`## Executive Summary\n\n${execSummary}\n\n---\n\n` +
+			writtenSections.map((s) => s.draft.trim()).join("\n\n---\n\n") +
+			contradictionNote +
+			`\n\n## Sources\n\n${srcList}\n`;
 
 		// ── Phase 8: audits ────────────────────────────────────────────────
 		checkAbort();

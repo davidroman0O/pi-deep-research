@@ -133,6 +133,17 @@ check("report has inline citations [n]", /\[\d+\]/.test(report));
 check("report has Sources section", /## Sources/.test(report));
 check("report mentions the topic", /modular|SMR|reactor/i.test(report));
 
+// §21.1 sectioned synthesis artifacts
+const outlinePath = join(cwd, ".pi", "research", result.runId, "outline.json");
+check("outline.json on disk (§21 approved outline)", existsSync(outlinePath));
+const outline = JSON.parse(await readFile(outlinePath, "utf8"));
+check("outline: >= 4 sections designed", (outline?.sections?.length ?? 0) >= 4, `${outline?.sections?.length} sections`);
+const wordCount = report.split(/\s+/).length;
+check("report is long-form (>= 1200 words)", wordCount >= 1200, `${wordCount} words`);
+const sectionHeads = (report.match(/^## /gm) ?? []).length;
+check("report has >= 5 section headings", sectionHeads >= 5, `${sectionHeads} headings`);
+check("report has executive summary", /## Executive Summary/i.test(report));
+
 check("audit.json on disk", existsSync(store.auditFile()));
 const audit = JSON.parse(await readFile(store.auditFile(), "utf8"));
 check("audit: coverage computed", Array.isArray(audit?.coverage?.covered));

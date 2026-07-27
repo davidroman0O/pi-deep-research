@@ -312,29 +312,85 @@ export const ENTAIL_TOOL = {
 	}),
 };
 
-// ── Phase 8: synthesis (markdown output, not JSON) ───────────────────────
-export const SYNTHESIZE_SYSTEM = controlPlane(
-	"synthesize",
-	`Your sole directive is to write a decision-oriented report from the VERIFIED claim graph provided. Identify themes (not source-by-source summaries), resolve contradictions by explaining WHY sources differ (assumptions, dates, methodology), quantify uncertainty using the confidence labels, and give a clear recommendation. Cite claims inline as [n] — n MUST be a number from the source list's "cite as" tokens, NEVER a claim id (C-numbers are internal, not citations). Every [n] must map to the numbered source list (1..N); inventing an index is a hard failure. Never introduce facts absent from the evidence. Flag every unresolved gap explicitly.`,
+// ── Phase 7a: report outline (§21: approved outline before writing) ─────
+export const OUTLINE_SYSTEM = controlPlane(
+	"outline",
+	`Your sole directive is to design the report outline. Sections must map to the spec's dimensions and the claim graph's themes — never one section per source. Each section gets an objective (what decision it informs) and the claim ids it will use. Order: context/market first, evidence themes, contradictions, gaps, recommendation last. Aim for thorough, decision-grade coverage — more sections with tight scope beat few bloated ones.`,
 );
 
-export function synthesizePrompt(
-	spec: Spec,
-	claimsDigest: string,
-	sources: Source[],
-): string {
-	const srcList = sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.url}${s.date ? ` (${s.date})` : ""}`).join("\n");
+export function outlinePrompt(spec: Spec, claimsDigest: string, synthesesDigest: string): string {
 	return `<research_specification>
-${JSON.stringify(spec, null, 2)}
+${JSON.stringify({ objective: spec.objective, dimensions: spec.dimensions, audience: spec.audience }, null, 2)}
 </research_specification>
 
-<verified_claim_graph>
+<verified_claims>
 ${claimsDigest}
-</verified_claim_graph>
+</verified_claims>
 
-<sources>
-${srcList}
-</sources>
+<topic_syntheses>
+${synthesesDigest}
+</topic_syntheses>
 
-Write the report in markdown: executive summary → key findings by theme → contradictions and why they differ → uncertainties and open gaps → recommendation. Inline [n] citations. End with a "## Sources" section listing [n] url.`;
+Submit the outline via the tool.`;
+}
+
+export const OUTLINE_TOOL = {
+	name: "submit_outline",
+	description: "Submit the report outline: sections with objectives and assigned claims.",
+	parameters: Type.Object({
+		sections: Type.Array(
+			Type.Object({
+				title: Type.String(),
+				objective: Type.String({ description: "The decision this section informs." }),
+				claim_ids: Type.Array(Type.String(), { description: "C-ids from the verified claims list." }),
+			}),
+			{ minItems: 4 },
+		),
+	}),
+};
+
+// ── Phase 7b: section drafting (§21.1 draft_section) ────────────────────
+export const SECTION_SYSTEM = controlPlane(
+	"draft_section",
+	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) every factual claim carries an inline [n] citation using the provided source numbers; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 500–1200 words for this section.`,
+);
+
+export function sectionPrompt(
+	spec: Spec,
+	section: { title: string; objective: string },
+	claimsDigest: string,
+	assumptionsDigest: string,
+): string {
+	return `<report_objective>${spec.objective}</report_objective>
+<section_title>${section.title}</section_title>
+<section_objective>${section.objective}</section_objective>
+
+<evidence_bundle>
+${claimsDigest}
+</evidence_bundle>
+
+<assumptions_and_conditions>
+${assumptionsDigest}
+</assumptions_and_conditions>
+
+Write the section now (markdown, no top-level # heading — start at ##).`;
+}
+
+// ── Phase 7c: executive summary ──────────────────────────────────────────
+export const EXEC_SUMMARY_SYSTEM = controlPlane(
+	"exec_summary",
+	`Your sole directive is to write the executive summary AFTER all sections exist. Synthesize the decision-relevant bottom line: the answer, the strongest evidence, the biggest uncertainty, and the recommendation. 250–450 words, no citations beyond [n] tokens already used, no new facts.`,
+);
+
+export function execSummaryPrompt(spec: Spec, sectionTitles: string[], topicSyntheses: string): string {
+	return `<report_objective>${spec.objective}</report_objective>
+<sections>
+${sectionTitles.map((t, i) => `${i + 1}. ${t}`).join("\n")}
+</sections>
+
+<per_dimension_conclusions>
+${topicSyntheses}
+</per_dimension_conclusions>
+
+Write the executive summary.`;
 }

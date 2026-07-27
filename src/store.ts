@@ -136,6 +136,14 @@ export const DEFAULT_CONFIG: ResearchConfig = {
 	max_search_queries: 4,
 };
 
+/** Depth profiles — user-facing scale knobs (liberation from fixed budgets). */
+export const PROFILES: Record<string, Partial<ResearchConfig>> = {
+	quick: { breadth: 4, max_sources: 10, max_iterations: 4, max_search_queries: 3, depth: 1 },
+	standard: {},
+	deep: { breadth: 6, max_sources: 40, max_iterations: 20, max_search_queries: 5, depth: 3 },
+	heavy: { breadth: 8, max_sources: 60, max_iterations: 30, max_search_queries: 6, depth: 4 },
+};
+
 export class RunStore {
 	readonly dir: string;
 	constructor(
@@ -298,6 +306,13 @@ export class RunStore {
 
 	async saveAudit(report: unknown) {
 		await writeFile(this.auditFile(), JSON.stringify(report, null, 2), "utf8");
+	}
+
+	outlineFile() {
+		return join(this.dir, "outline.json");
+	}
+	async saveOutline(outline: unknown) {
+		await writeFile(this.outlineFile(), JSON.stringify(outline, null, 2), "utf8");
 	}
 
 	async saveReport(md: string) {
