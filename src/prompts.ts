@@ -125,7 +125,7 @@ export const EXTRACT_TOOL = {
 		evidence: Type.Array(
 			Type.Object({
 				claim: Type.String({ description: "Precise, self-contained factual claim." }),
-				values: Type.Optional(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()]))),
+				values: Type.Optional(Type.Record(Type.String(), Type.Union([Type.String(), Type.Number()]), { description: "REQUIRED for any quantitative claim: key→value for each number/unit/percent/monetary figure (e.g. {overnight_cost_usd_per_kwe: 5500, currency_year: 2022}). Leave empty ONLY for purely qualitative claims." })),
 				conditions: Type.Optional(Type.String({ description: "Assumptions/qualifiers: currency year, methodology, geography." })),
 				confidence: Type.Number({ minimum: 0, maximum: 1 }),
 				quote: Type.Optional(Type.String({ description: "Verbatim supporting snippet, <= 40 words." })),

@@ -421,15 +421,22 @@ export async function runResearch(
 
 		// ── Phase 6c: quantitative normalization (§18) ───────────────────────
 		checkAbort();
-		const valueClaims = allEvidence
-			.filter((e) => e.values && Object.keys(e.values).length > 0)
+		// Numeric + scenario gates fire on EITHER structured `values` OR a number
+		// detected in the claim text. Many extractors (e.g. glm-5-turbo) write
+		// numbers into the claim prose and leave `values` empty — the §18
+		// sections must still run for quantitative topics.
+		const numericEvidence = allEvidence.filter(
+			(e) => (e.values && Object.keys(e.values).length > 0) || /[$€£¥]\s?\d|\d[\d,.]*\s*(?:kW|MW|GW|MWh|kWh|%|bn|billion|million|USD|CAD|GBP|EUR|years?|months?|\/kW)/i.test(e.claim),
+		);
+		const valueClaims = numericEvidence
 			.map((e) => {
 				const srcNum = sources.findIndex((s) => s.id === e.source_id) + 1;
-				return `- ${e.claim} | values: ${JSON.stringify(e.values)} | conditions: ${e.conditions ?? "none"} | source [${srcNum}]`;
+				const vals = e.values && Object.keys(e.values).length > 0 ? JSON.stringify(e.values) : "(in claim text)";
+				return `- ${e.claim} | values: ${vals} | conditions: ${e.conditions ?? "none"} | source [${srcNum}]`;
 			})
 			.join("\n");
 		let numericSection = "";
-		if (valueClaims.length >= 3) {
+		if (numericEvidence.length >= 3) {
 			progress("Normalizing quantitative claims…");
 			const { rows } = await llmJson<{ rows: Array<{ metric: string; subject: string; value: string; normalized?: string; conditions: string; citation: number; comparable: boolean }> }>(
 				deps.handle, NUMERIC_TOOL, NUMERIC_SYSTEM, numericPrompt(meta.spec, valueClaims),
@@ -455,7 +462,7 @@ export async function runResearch(
 
 		// ── Phase 6d: scenario modeling (§18) ──────────────────────────────
 		let scenarioSection = "";
-		if (valueClaims.length >= 3 && /\d{4}|20\d\d|horizon|projection|future|2030|2040|2050/i.test(meta.spec.time_horizon ?? "2035")) {
+		if (numericEvidence.length >= 3 && /\d{4}|20\d\d|horizon|projection|future|2030|2040|2050/i.test(meta.spec.time_horizon ?? "2035")) {
 			checkAbort();
 			progress("Modeling scenarios…");
 			const sc = await llmJson<{ metric: string; base_value: string; scenarios: Array<{ name: string; assumption: string; projections: Array<{ year: string; value: string }> }> }>(
