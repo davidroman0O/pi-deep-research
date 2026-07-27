@@ -312,6 +312,73 @@ export const ENTAIL_TOOL = {
 	}),
 };
 
+// ── Phase 6c: quantitative normalization (§18) ───────────────────────────
+export const NUMERIC_SYSTEM = controlPlane(
+	"normalize",
+	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
+);
+
+export function numericPrompt(spec: Spec, valueClaims: string): string {
+	return `<research_objective>${spec.objective}</research_objective>
+
+<numeric_claims>
+${valueClaims}
+</numeric_claims>
+
+Submit normalized comparison rows via the tool.`;
+}
+
+export const NUMERIC_TOOL = {
+	name: "submit_normalized_table",
+	description: "Submit normalized numeric comparison rows.",
+	parameters: Type.Object({
+		rows: Type.Array(
+			Type.Object({
+				metric: Type.String({ description: "e.g. 'overnight capital cost'" }),
+				subject: Type.String({ description: "entity/design/project the figure belongs to" }),
+				value: Type.String({ description: "numeric value with unit, as stated" }),
+				normalized: Type.Optional(Type.String({ description: "converted value if exact conversion possible, else omit" })),
+				conditions: Type.String({ description: "currency year, scope, methodology" }),
+				citation: Type.Integer({ description: "source number [n]" }),
+				comparable: Type.Boolean({ description: "false when bases/vintages/scopes differ materially" }),
+			}),
+		),
+	}),
+};
+
+// ── Phase 8b: citation repair (§22.1) ────────────────────────────────────
+export const CITATION_REPAIR_SYSTEM = controlPlane(
+	"citation_repair",
+	`Your sole directive is to repair failed citations in a report. For each flagged sentence: if a DIFFERENT source in the list actually supports the claim, re-cite it; if no source supports it, mark it to be softened (the claim stays but the citation is dropped and the sentence must be hedged as an inference); if the flag is a false positive, keep as-is with justification. Never invent sources.`,
+);
+
+export function citationRepairPrompt(failures: string, srcList: string): string {
+	return `<failed_citations>
+${failures}
+</failed_citations>
+
+<available_sources>
+${srcList}
+</available_sources>
+
+Submit repair decisions via the tool.`;
+}
+
+export const CITATION_REPAIR_TOOL = {
+	name: "submit_citation_repairs",
+	description: "Submit one repair decision per failed citation.",
+	parameters: Type.Object({
+		repairs: Type.Array(
+			Type.Object({
+				sentence_prefix: Type.String({ description: "first ~10 words of the flagged sentence, for matching" }),
+				action: Type.Union([Type.Literal("recite"), Type.Literal("drop_citation"), Type.Literal("keep")]),
+				new_citation: Type.Optional(Type.Integer({ description: "required when action=recite" })),
+				reason: Type.String(),
+			}),
+		),
+	}),
+};
+
 // ── Phase 7a: report outline (§21: approved outline before writing) ─────
 export const OUTLINE_SYSTEM = controlPlane(
 	"outline",

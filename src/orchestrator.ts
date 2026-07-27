@@ -52,9 +52,11 @@ import {
 	GAP_SYSTEM, gapPrompt, GAP_TOOL,
 	RELATION_SYSTEM, relationPrompt, RELATION_TOOL,
 	TOPIC_SYNTH_SYSTEM, topicSynthPrompt, TOPIC_SYNTH_TOOL,
+	NUMERIC_SYSTEM, numericPrompt, NUMERIC_TOOL,
 	OUTLINE_SYSTEM, outlinePrompt, OUTLINE_TOOL,
 	SECTION_SYSTEM, sectionPrompt,
 	EXEC_SUMMARY_SYSTEM, execSummaryPrompt,
+	CITATION_REPAIR_SYSTEM, citationRepairPrompt, CITATION_REPAIR_TOOL,
 } from "./prompts.ts";
 
 export interface OrchestratorDeps {
@@ -416,7 +418,39 @@ export async function runResearch(
 			{ signal: deps.signal, temperature: 0.3 },
 		);
 
-		// ── Phase 7: sectioned synthesis (§21.1) ─────────────────────────────
+		// ── Phase 6c: quantitative normalization (§18) ───────────────────────
+		checkAbort();
+		const valueClaims = allEvidence
+			.filter((e) => e.values && Object.keys(e.values).length > 0)
+			.map((e) => {
+				const srcNum = sources.findIndex((s) => s.id === e.source_id) + 1;
+				return `- ${e.claim} | values: ${JSON.stringify(e.values)} | conditions: ${e.conditions ?? "none"} | source [${srcNum}]`;
+			})
+			.join("\n");
+		let numericSection = "";
+		if (valueClaims.length >= 3) {
+			progress("Normalizing quantitative claims…");
+			const { rows } = await llmJson<{ rows: Array<{ metric: string; subject: string; value: string; normalized?: string; conditions: string; citation: number; comparable: boolean }> }>(
+				deps.handle, NUMERIC_TOOL, NUMERIC_SYSTEM, numericPrompt(meta.spec, valueClaims),
+				{ signal: deps.signal, temperature: 0.2 },
+			);
+			const byMetric = new Map<string, typeof rows>();
+			for (const r of rows) {
+				if (!byMetric.has(r.metric)) byMetric.set(r.metric, []);
+				byMetric.get(r.metric)!.push(r);
+			}
+			numericSection =
+				"\n\n## Quantitative Comparison (normalized)\n\n" +
+				[...byMetric.entries()]
+					.map(([metric, rs]) => {
+						const header = `| Subject | Value | Normalized | Conditions | Source |\n|---|---|---|---|---|`;
+						const body = rs
+							.map((r) => `| ${r.subject} | ${r.value} | ${r.normalized ?? "—"} | ${r.conditions}${r.comparable ? "" : " ⚠️ not directly comparable"} | [${r.citation}] |`)
+							.join("\n");
+						return `### ${metric}\n${header}\n${body}`;
+					})
+					.join("\n\n");
+		}
 		checkAbort();
 		progress("Designing report outline…");
 		const claimsDigest = claims
@@ -490,10 +524,39 @@ export async function runResearch(
 			contradictionNote +
 			`\n\n## Sources\n\n${srcList}\n`;
 
-		// ── Phase 8: audits ────────────────────────────────────────────────
+		// ── Phase 8: audits + citation repair (§22.1) ────────────────────────
 		checkAbort();
 		progress("Running citation + quality audits…");
 		const citationAudit = await auditCitations(deps.handle, report, sources, allEvidence, deps.signal);
+
+		// repair pass: re-cite or hedge failed citations instead of just flagging
+		let finalReport = report;
+		if (citationAudit.failures.length > 0) {
+			progress(`Repairing ${citationAudit.failures.length} failed citations…`);
+			const failureDigest = citationAudit.failures
+				.map((f) => `- SENTENCE: ${f.sentence.slice(0, 200)}\n  CITED: ${f.citation} | PROBLEM: ${f.problem.slice(0, 150)}`)
+				.join("\n");
+			const srcListForRepair = sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.url}`).join("\n");
+			const { repairs } = await llmJson<{ repairs: Array<{ sentence_prefix: string; action: "recite" | "drop_citation" | "keep"; new_citation?: number; reason: string }> }>(
+				deps.handle, CITATION_REPAIR_TOOL, CITATION_REPAIR_SYSTEM,
+				citationRepairPrompt(failureDigest, srcListForRepair),
+				{ signal: deps.signal, temperature: 0.2 },
+			);
+			let repaired = 0;
+			for (const rep of repairs) {
+				const failure = citationAudit.failures.find((f) => f.sentence.startsWith(rep.sentence_prefix.slice(0, 30)) || f.sentence.includes(rep.sentence_prefix.slice(0, 30)));
+				if (!failure) continue;
+				if (rep.action === "recite" && rep.new_citation && rep.new_citation <= sources.length) {
+					finalReport = finalReport.replace(failure.sentence + failure.citation, failure.sentence + `[${rep.new_citation}]`);
+					repaired++;
+				} else if (rep.action === "drop_citation") {
+					finalReport = finalReport.replace(failure.sentence + failure.citation, failure.sentence + " (inference — no direct source)");
+					repaired++;
+				}
+			}
+			await store.log("citation_repair", { attempted: repairs.length, applied: repaired });
+		}
+
 		const staticAudits = runStaticAudits({
 			spec: meta.spec,
 			tasks,
@@ -508,7 +571,7 @@ export async function runResearch(
 		await store.saveAudit(audit);
 
 		const auditNote = audit.overall_pass ? "" : `\n\n---\n\n## Audit warnings\n${renderAuditWarnings(audit)}`;
-		await store.saveReport(report + auditNote);
+		await store.saveReport(finalReport + numericSection + auditNote);
 
 		meta.status = "completed";
 		await store.saveMeta(meta);
@@ -518,7 +581,7 @@ export async function runResearch(
 
 		return {
 			runId,
-			report: report + auditNote,
+			report: finalReport + numericSection + auditNote,
 			meta,
 			sources,
 			evidence: allEvidence,
