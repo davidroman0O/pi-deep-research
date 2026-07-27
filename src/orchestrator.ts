@@ -583,7 +583,14 @@ export async function runResearch(
 		await store.saveAudit(audit);
 
 		const auditNote = audit.overall_pass ? "" : `\n\n---\n\n## Audit warnings\n${renderAuditWarnings(audit)}`;
-		await store.saveReport(finalReport + numericSection + auditNote);
+		// numeric tables belong before the Sources list, not after it
+		let assembled = finalReport;
+		if (numericSection) {
+			assembled = /\n## Sources/.test(assembled)
+				? assembled.replace(/\n## Sources/, numericSection + "\n\n## Sources")
+				: assembled + numericSection;
+		}
+		await store.saveReport(assembled + auditNote);
 
 		meta.status = "completed";
 		await store.saveMeta(meta);
@@ -593,7 +600,7 @@ export async function runResearch(
 
 		return {
 			runId,
-			report: finalReport + numericSection + auditNote,
+			report: assembled + auditNote,
 			meta,
 			sources,
 			evidence: allEvidence,
