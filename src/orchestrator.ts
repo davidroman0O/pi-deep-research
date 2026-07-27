@@ -539,6 +539,7 @@ export async function runResearch(
 
 		// repair pass: re-cite or hedge failed citations instead of just flagging
 		let finalReport = report;
+		let citationsRepaired = 0;
 		if (citationAudit.failures.length > 0) {
 			progress(`Repairing ${citationAudit.failures.length} failed citations…`);
 			const failureDigest = citationAudit.failures
@@ -563,6 +564,7 @@ export async function runResearch(
 				}
 			}
 			await store.log("citation_repair", { attempted: repairs.length, applied: repaired });
+			citationsRepaired = repaired;
 		}
 
 		const staticAudits = runStaticAudits({
@@ -576,6 +578,8 @@ export async function runResearch(
 			injectionFlags: [...new Set(injectionFlags)],
 		});
 		const audit = assembleAudit(staticAudits, citationAudit);
+		// record repairs honestly: they were applied post-audit, not re-verified
+		(audit.citation_audit as { repaired?: number }).repaired = citationsRepaired;
 		await store.saveAudit(audit);
 
 		const auditNote = audit.overall_pass ? "" : `\n\n---\n\n## Audit warnings\n${renderAuditWarnings(audit)}`;
