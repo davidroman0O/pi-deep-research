@@ -419,7 +419,7 @@ export const OUTLINE_TOOL = {
 // ── Phase 7b: section drafting (§21.1 draft_section) ────────────────────
 export const SECTION_SYSTEM = controlPlane(
 	"draft_section",
-	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) every factual claim carries an inline [n] citation using the provided source numbers; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 500–1200 words for this section.`,
+	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) ONE factual claim per citation — never stack multiple claims onto a single [n]; when a sentence carries several facts, cite each fact separately [1][2]; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 500–1200 words for this section.`,
 );
 
 export function sectionPrompt(

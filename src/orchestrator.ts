@@ -552,6 +552,7 @@ export async function runResearch(
 				{ signal: deps.signal, temperature: 0.2 },
 			);
 			let repaired = 0;
+			const keptSentences = new Set<string>();
 			for (const rep of repairs) {
 				const failure = citationAudit.failures.find((f) => f.sentence.startsWith(rep.sentence_prefix.slice(0, 30)) || f.sentence.includes(rep.sentence_prefix.slice(0, 30)));
 				if (!failure) continue;
@@ -561,9 +562,14 @@ export async function runResearch(
 				} else if (rep.action === "drop_citation") {
 					finalReport = finalReport.replace(failure.sentence + failure.citation, failure.sentence + " (inference — no direct source)");
 					repaired++;
+				} else if (rep.action === "keep") {
+					// reviewer judged the flag a false positive — downgrade to reviewed
+					keptSentences.add(failure.sentence);
 				}
 			}
-			await store.log("citation_repair", { attempted: repairs.length, applied: repaired });
+			// remove reviewer-cleared items from the failure list
+			citationAudit.failures = citationAudit.failures.filter((f) => !keptSentences.has(f.sentence));
+			await store.log("citation_repair", { attempted: repairs.length, applied: repaired, cleared: keptSentences.size });
 			citationsRepaired = repaired;
 		}
 
