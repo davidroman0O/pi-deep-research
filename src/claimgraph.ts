@@ -170,6 +170,7 @@ function sharedValueKey(a: Evidence, b: Evidence): boolean {
 
 /** §9.2 entity+value canonicalization: do two claim texts share a significant entity AND a numeric value? */
 export function sharesEntityAndValue(textA: string, textB: string): boolean {
+	if (!textA || !textB) return false;
 	const entA = extractEntitiesFromText(textA);
 	const entB = extractEntitiesFromText(textB);
 	if (entA.size === 0) return false;
@@ -183,10 +184,12 @@ export function sharesEntityAndValue(textA: string, textB: string): boolean {
 
 function extractEntitiesFromText(text: string): Set<string> {
 	const s = new Set<string>();
+	if (!text) return s;
 	for (const m of text.matchAll(/\b([A-Z][a-z]{3,}|[A-Z]{2,}\d*|[A-Z]{2,}-\d+)\b/g)) s.add(m[1].toLowerCase());
 	return s;
 }
 function extractNumbersFromText(text: string): number[] {
+	if (!text) return [];
 	const out: number[] = [];
 	for (const m of text.matchAll(/(\d[\d,.]*)/g)) {
 		const n = Number(m[1].replace(/,/g, ""));

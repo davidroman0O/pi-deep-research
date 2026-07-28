@@ -1,0 +1,4 @@
+{
+  "topic": "What is the current capital cost per kW of small modular reactors?",
+  "expected_dimensions": ["capital cost", "overnight cost", "FOAK vs NOAK", "vendor estimates", "government subsidies", "construction timeline", "regulatory costs", "supply chain"]
+}

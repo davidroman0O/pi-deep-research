@@ -19,15 +19,22 @@ export interface Spec {
 	freshness?: { current_as_of?: string };
 }
 
+export type TaskState = "open" | "discovery" | "evidence_gathering" | "corroboration" | "resolving" | "complete";
+
 export interface Task {
 	id: string;
 	question: string;
 	priority: number; // higher = sooner
 	status: "open" | "in_progress" | "done" | "skipped";
+	state: TaskState; // controller state machine (DESIGN_SPEC §2.3)
 	depth: number; // 0 = top-level subquestion, 1 = follow-up, ...
 	completion_test?: string;
 	depends_on?: string[]; // task ids that must complete first (§4 task graph)
 	summary?: string; // task memo digest (tier 3)
+	coverage: number; // dynamic — fraction of required_evidence satisfied (§16)
+	uncertainty: number; // dynamic — §19 formula, code-computed
+	required_evidence: string[]; // per-task policy, set at decompose (§4.1)
+	search_attempts: number; // anti-loop guard (§20)
 }
 
 export interface Source {
@@ -141,10 +148,10 @@ export const DEFAULT_CONFIG: ResearchConfig = {
 /** Depth profiles — user-facing scale knobs (liberation from fixed budgets). */
 export const PROFILES: Record<string, Partial<ResearchConfig>> = {
 	quick: { breadth: 4, max_sources: 10, max_iterations: 4, max_search_queries: 3, depth: 1, citation_checks: 12 },
-	standard: {},
-	deep: { breadth: 6, max_sources: 40, max_iterations: 20, max_search_queries: 5, depth: 3, citation_checks: 30 },
-	heavy: { breadth: 8, max_sources: 60, max_iterations: 30, max_search_queries: 6, depth: 4, citation_checks: 40 },
-	ultra: { breadth: 10, max_sources: 100, max_iterations: 40, max_search_queries: 8, depth: 5, citation_checks: 50 },
+	standard: { breadth: 5, max_sources: 25, max_iterations: 12, max_search_queries: 4, depth: 2, citation_checks: 25 },
+	deep: { breadth: 7, max_sources: 60, max_iterations: 30, max_search_queries: 5, depth: 3, citation_checks: 40 },
+	heavy: { breadth: 10, max_sources: 120, max_iterations: 50, max_search_queries: 6, depth: 4, citation_checks: 50 },
+	ultra: { breadth: 12, max_sources: 200, max_iterations: 80, max_search_queries: 8, depth: 5, citation_checks: 60 },
 };
 
 export class RunStore {
@@ -305,6 +312,13 @@ export class RunStore {
 		} catch {
 			return [];
 		}
+	}
+
+	coverageMatrixFile() {
+		return join(this.dir, "coverage_matrix.json");
+	}
+	async saveCoverage(matrix: unknown) {
+		await writeFile(this.coverageMatrixFile(), JSON.stringify(matrix, null, 2), "utf8");
 	}
 
 	async saveAudit(report: unknown) {

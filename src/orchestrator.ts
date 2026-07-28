@@ -37,8 +37,11 @@ import { getSearchProvider, rankResults, type SearchProvider, type SearchResult 
 import { ingestUrl, type Document } from "./ingest.ts";
 import { wrapUntrusted } from "./trust.ts";
 import { canonicalUrl, contentHash, simhash, checkDuplicate, novelty, detectSourceFamily } from "./novel.ts";
-import { clusterClaims, buildClaim, relationInput, toEdge, type ClaimRelation } from "./claimgraph.ts";
+import { clusterClaims, buildClaim, relationInput, toEdge, sharesEntityAndValue, type ClaimRelation } from "./claimgraph.ts";
 import { assessSourceQuality, compositeQuality, qualityLabel } from "./quality.ts";
+import { defaultRequiredEvidence, createBudget, isBudgetExhausted, guardAction, transitionState, isTaskComplete, MAX_ATTEMPTS_PER_TASK } from "./controller.ts";
+import { buildCoverageMatrix } from "./coverage.ts";
+import { buildSnapshot, chooseAction, type MemorySnapshot } from "./policy.ts";
 import { chunkDocument, selectPassages, assembleContext } from "./passage.ts";
 import { runParallel, successes } from "./parallel.ts";
 import { auditCitations, runStaticAudits, assembleAudit, type AuditReport } from "./audits.ts";
@@ -105,7 +108,7 @@ interface SourceOutcome {
 
 const NOVELTY_FLOOR = 0.15;
 const MAX_RELATION_CHECKS = 15;
-const MAX_TOTAL_TASKS = 14;
+const MAX_TOTAL_TASKS = 40;
 const TASK_CONCURRENCY = 2; // tasks researched in parallel (§26 bounded fan-out)
 const SOURCE_CONCURRENCY = 3; // sources ingested/extracted in parallel per task
 const EXTRACT_CHAR_BUDGET = 14_000; // §13.2 budgeted context assembly
@@ -179,7 +182,12 @@ export async function runResearch(
 				completion_test: t.completion_test,
 				depth: 0,
 				status: "open" as const,
+				state: "open" as const,
 				depends_on: [],
+				coverage: 0,
+				uncertainty: 1,
+				required_evidence: defaultRequiredEvidence(t.priority),
+				search_attempts: 0,
 			}));
 			await store.saveTasks(tasks);
 		}
@@ -188,212 +196,245 @@ export async function runResearch(
 		let sources = await store.loadSources();
 		const sourceMemos: SourceMemo[] = await store.loadSourceMemos();
 		const taskMemos: TaskMemo[] = await store.loadTaskMemos();
+
+		// ── CONTROLLER LOOP (§14) ─────────────────────────────────────────
+		const budget = createBudget(config);
 		let consecutiveLowNovelty = 0;
 
 		while (meta.stats.iterations < config.max_iterations && sources.length < config.max_sources) {
 			checkAbort();
-			const ready = readyTasks(tasks);
-			if (ready.length === 0) break;
-			const batch = ready.slice(0, TASK_CONCURRENCY);
-			for (const t of batch) t.status = "in_progress";
+
+			// refresh: coverage matrix (§16 — deterministic, no model call)
+			const _allEvidence = await store.loadEvidence();
+			const _allClaims = await store.loadClaims();
+			const _allEdges = await store.loadEdges();
+			const covMatrix = buildCoverageMatrix(meta.spec!, tasks, _allEvidence, _allClaims, sources, _allEdges);
+
+			// select next task — highest gapScore from open tasks
+			const openTasks = tasks.filter((t) => t.status === "open" || t.status === "in_progress");
+			if (openTasks.length === 0) break;
+
+			const taskGapScores = new Map(covMatrix.tasks.map((tc) => [tc.taskId, tc.gapScore]));
+			const task = openTasks.sort((a, b) =>
+				(taskGapScores.get(b.id) ?? 0) - (taskGapScores.get(a.id) ?? 0) ||
+				b.priority - a.priority,
+			)[0];
+			task.status = "in_progress";
 			await store.saveTasks(tasks);
+			progress(`[iter ${meta.stats.iterations + 1}] ${task.id}: ${task.question.slice(0, 60)}…`);
 
-			progress(`[iter ${meta.stats.iterations + 1}] researching ${batch.length} task(s) in parallel…`);
+			// ── TASK ACTION LOOP (§14 inner loop) ──────────────────────────
+			let taskActions = 0;
+			while (true) {
+				checkAbort();
 
-			// ── parallel task pipelines ────────────────────────────────────
-			const taskOutcomes = await runParallel(
-				batch,
-				async (task) => {
-					// query generation
-					const evidenceSoFar = await store.loadEvidence();
-					const knownSoFar = evidenceSoFar
-						.filter((e) => e.task_id === task.id)
-						.map((e) => `- ${e.claim}`)
-						.join("\n");
-					const { queries } = await llmJson<{ queries: string[] }>(
-						deps.handle, QUERY_TOOL, QUERY_SYSTEM, queryPrompt(task, knownSoFar),
-						{ signal: deps.signal, temperature: 0.6 },
-					);
+				// refresh task state from evidence
+				const taskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
+				const taskEdges = await store.loadEdges();
+				task.state = transitionState(task, taskEvidence, sources, taskEdges);
 
-					// parallel search across the task's queries
-					const toRun = queries.slice(0, config.max_search_queries);
-					const searchOutcomes = await runParallel(
-						toRun,
-						async (q) => {
-							try {
-								return await search.search(q, deps.signal, config.breadth);
-							} catch (err) {
-								return { error: String(err), query: q };
-							}
-						},
-						config.max_search_queries,
-						deps.signal,
-					);
+				// completion check (§4.2)
+				if (isTaskComplete(task, await store.loadEvidence(), sources, taskEdges)) break;
+				if (isBudgetExhausted(budget)) { progress(`  ⚠ budget exhausted`); break; }
+
+				// model chooses action (§15)
+				const snapshot = buildSnapshot(meta.spec!, tasks, _allClaims, _allEdges, sources, config,
+					covMatrix.dimensions.filter((d) => d.status === "complete").map((d) => d.name),
+					covMatrix.openDimensions);
+				const action = await chooseAction(deps.handle, task, snapshot, deps.signal);
+
+				// guard (state machine + safety)
+				const guarded = guardAction(action, task, budget);
+				if (guarded.coerced) await store.log("action_coerced", { from: action.type, to: guarded.type, reason: guarded.reason });
+				progress(`  ▸ ${guarded.type}${guarded.coerced ? " (coerced)" : ""} — ${action.reason?.slice(0, 60) ?? ""}`);
+
+				budget.actionsUsed++;
+				task.search_attempts++;
+
+				if (guarded.type === "stop" || guarded.type === "summarize") break;
+
+				if (guarded.type === "search" || guarded.type === "verify") {
+					const queries = action.queries?.length
+						? action.queries.slice(0, config.max_search_queries)
+						: (await llmJson<{ queries: string[] }>(deps.handle, QUERY_TOOL, QUERY_SYSTEM,
+							queryPrompt(task, taskEvidence.map((e) => `- ${e.claim}`).join("\n")),
+							{ signal: deps.signal, temperature: 0.6 })).queries.slice(0, config.max_search_queries);
+					meta.stats.searches += queries.length;
+
 					const allResults: SearchResult[] = [];
-					for (const o of searchOutcomes) {
-						if (!o.ok) continue;
-						if (Array.isArray(o.value)) allResults.push(...o.value);
-						else await store.log("search_error", o.value);
+					for (const q of queries) {
+						try { allResults.push(...(await search.search(q, deps.signal, config.breadth))); }
+						catch (err) { await store.log("search_error", { query: q, error: String(err) }); }
 					}
-					const ranked = rankResults(allResults).slice(0, config.breadth);
-
-					// parallel source pipelines: ingest → novelty → extract → source memo
-					const sourceOutcomes = await runParallel(
-						ranked,
-						(res): Promise<SourceOutcome> => sourcePipeline(res, task, sources, evidenceSoFar, deps, topicKeywords),
-						SOURCE_CONCURRENCY,
-						deps.signal,
-					);
-
-					return { task, queries: toRun, outcomes: sourceOutcomes };
-				},
-				TASK_CONCURRENCY,
-				deps.signal,
-			);
-
-			// ── central apply: single-writer to the store ──────────────────
-			for (const outcome of taskOutcomes) {
-				if (!outcome.ok) {
-					await store.log("task_error", { error: String(outcome.error) });
-					continue;
-				}
-				const { task, queries, outcomes } = outcome.value;
-				meta.stats.searches += queries.length;
-
-				const newEvidence: Evidence[] = [];
-				const newMemos: SourceMemo[] = [];
-				let taskNovelHits = 0;
-
-				for (const so of outcomes) {
-					if (!so.ok) {
-						await store.log("source_error", { error: String(so.error) });
-						continue;
-					}
-					const s = so.value;
-					if (s.skipReason) {
-						await store.log("source_skipped", { url: s.result.url, reason: s.skipReason });
-						if (s.skipReason === "low-novelty") taskNovelHits++;
-						continue;
-					}
-					if (!s.source || !s.doc) continue;
-
-					// RENUMBER centrally: parallel tasks all numbered from the same
-					// base, so worker-assigned ids collide. Final id assigned here,
-					// then remapped through evidence + memo.
-					const finalId = `s${sources.length + 1}`;
-					const workerId = s.source.id;
-					s.source.id = finalId;
-					for (const ev of s.evidence) ev.source_id = finalId;
-					if (s.memo) s.memo.source_id = finalId;
-
-					// archive raw (tier 0) + register source
-					if (s.rawText) await store.saveRawSource(finalId, s.rawText);
-					sources.push(s.source);
-					if (s.injection?.length) injectionFlags.push(...s.injection.map(() => s.result.url));
-					newEvidence.push(...s.evidence);
-					if (s.memo) newMemos.push(s.memo);
-				}
-
-				meta.stats.sources_ingested = sources.length;
-				for (const ev of newEvidence) {
-					ev.id = `e${meta.stats.evidence_extracted + 1}`;
-					meta.stats.evidence_extracted++;
-					await store.appendEvidence(ev);
-				}
-				for (const m of newMemos) sourceMemos.push(m);
-				await store.saveSources(sources);
-				await store.saveSourceMemos(sourceMemos);
-				await store.saveMeta(meta);
-
-				// ── verify step (§15 verify action — DRH P0 #2) ─────────────────
-				// After extraction, check for single-sourced high-confidence claims.
-				// If found, fire a targeted corroborating search before marking done.
-				// This is the simplest form of the verify action — the full agent loop
-				// (choose_action) replaces this with a model-driven decision later.
-				const taskEvidencePostExtract = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
-				const sourceFamilyMap = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
-				const singleSourced = taskEvidencePostExtract.filter((e) => {
-					if (e.confidence < 0.6) return false;
-					const sameClaimFamilies = new Set(
-						taskEvidencePostExtract
-							.filter((e2) => e2.claim.includes(e.claim.slice(0, 40)) || e.claim.includes(e2.claim.slice(0, 40)))
-							.map((e2) => sourceFamilyMap.get(e2.source_id))
-							.filter(Boolean) as string[],
-					);
-					return sameClaimFamilies.size < 2;
-				});
-
-				if (singleSourced.length > 0 && task.priority >= 5 && sources.length < config.max_sources - 2) {
-					checkAbort();
-					progress(`⚡ Verifying ${singleSourced.length} single-sourced claim(s) for ${task.id}…`);
-					const claimToVerify = singleSourced[0];
-					const verifyQueries = [
-						`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
-						`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
-					];
-					const verifyResults: SearchResult[] = [];
-					for (const vq of verifyQueries) {
-						try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
-					}
-					const verifyRanked = rankResults(verifyResults)
+					const ranked = rankResults(allResults)
 						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
-						.slice(0, 3);
-					const verifyOutcomes = await runParallel(
-						verifyRanked,
-						(res): Promise<SourceOutcome> => sourcePipeline(res, task, sources, taskEvidencePostExtract, deps, topicKeywords),
-						2, deps.signal,
-					);
-					// apply verify outcomes centrally
-					for (const vo of verifyOutcomes) {
-						if (!vo.ok || !vo.value.source) continue;
-						const vs = vo.value;
-						if (!vs.source) continue;
-						const finalId = `s${sources.length + 1}`;
-						vs.source.id = finalId;
-						for (const ev of vs.evidence) ev.source_id = finalId;
-						if (vs.memo) vs.memo.source_id = finalId;
-						if (vs.rawText) await store.saveRawSource(finalId, vs.rawText);
-						sources.push(vs.source);
-						for (const ev of vs.evidence) { ev.id = `e${meta.stats.evidence_extracted + 1}`; meta.stats.evidence_extracted++; await store.appendEvidence(ev); }
-						if (vs.memo) sourceMemos.push(vs.memo);
+						.slice(0, config.breadth);
+
+					for (const res of ranked) {
+						checkAbort();
+						if (sources.length >= config.max_sources) break;
+
+						const known = sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) }));
+						let doc;
+						try { doc = await ingestUrl(res.url, { signal: deps.signal, maxChars: 40_000, timeoutMs: 45_000 }); }
+						catch (err) { await store.log("ingest_error", { url: res.url, error: String(err) }); continue; }
+						if (doc.text.trim().length < 200) continue;
+
+						const dup = checkDuplicate(res.url, doc.text, known);
+						if (dup.isDuplicate) { await store.log("duplicate_skipped", { url: res.url, reason: dup.reason }); continue; }
+
+						const knownTexts = (await store.loadEvidence()).map((e) => e.claim + " " + (e.quote ?? ""));
+						const nov = novelty(doc.text, knownTexts);
+						const candidatePublisher = hostOf(res.url);
+						const publisherAlreadyKnown = sources.some((s) => s.publisher === candidatePublisher);
+						if (nov < NOVELTY_FLOOR && knownTexts.length > 3 && publisherAlreadyKnown) {
+							await store.log("low_novelty_skipped", { url: res.url, novelty: nov }); continue;
+						}
+
+						const passages = chunkDocument(doc.text);
+						const selected = selectPassages(task.question + " " + (task.completion_test ?? ""), passages, EXTRACT_CHAR_BUDGET);
+						const wrapped = wrapUntrusted(`${doc.title} (${res.url})`, assembleContext(selected), doc.trust);
+
+						const extracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
+							extractPrompt(task, doc.title, doc.url, wrapped), { signal: deps.signal, temperature: 0.2 });
+
+						const evidenceList = Array.isArray(extracted?.evidence) ? extracted.evidence : [];
+						if (evidenceList.length === 0) { await store.log("no_evidence", { url: res.url, task: task.id }); continue; }
+
+						const features = assessSourceQuality({ url: res.url, title: doc.title, contentType: doc.contentType,
+							kind: doc.kind, text: doc.text, date: doc.date, topicKeywords });
+						const composite = compositeQuality(features);
+						const sourceId = `s${sources.length + 1}`;
+						const source: Source = { id: sourceId, url: res.url, url_canonical: canonicalUrl(res.url),
+							title: doc.title || res.title, publisher: candidatePublisher,
+							source_family: detectSourceFamily(res.url, candidatePublisher), date: doc.date,
+							quality: qualityLabel(composite), quality_features: features,
+							hash: contentHash(doc.text), fingerprint: simhash(doc.text).toString(16) };
+						sources.push(source);
+						await store.saveRawSource(sourceId, doc.text);
+						if (extracted.injection_detected?.length) injectionFlags.push(res.url);
+						budget.sourcesUsed++;
+
+						for (const e of evidenceList) {
+							const ev: Evidence = { id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: sourceId,
+								claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote };
+							await store.appendEvidence(ev);
+							meta.stats.evidence_extracted++;
+						}
+
+						const smemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
+							deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
+							sourceMemoPrompt(task.question, doc.title, res.url,
+								evidenceList.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
+							{ signal: deps.signal, temperature: 0.2 });
+						sourceMemos.push({ source_id: sourceId, ...smemo, relevant_claims: [] });
+
+						meta.stats.sources_ingested = sources.length;
+						await store.saveSources(sources);
+						await store.saveSourceMemos(sourceMemos);
+						await store.saveMeta(meta);
+						progress(`    +${extracted.evidence.length} evidence — ${candidatePublisher}`);
+						await store.log("action", { task: task.id, action: guarded.type, reason: action.reason, queries, source: res.url });
 					}
-					meta.stats.sources_ingested = sources.length;
-					await store.saveSources(sources);
-					await store.saveSourceMemos(sourceMemos);
-					await store.saveMeta(meta);
-					await store.log("verify_fired", { task: task.id, claims_verified: singleSourced.length, new_sources: verifyOutcomes.filter((v) => v.ok && v.value.source).length });
 				}
-
-				// task memo (LLM summarization, tier 3) — synthesized from every
-				// source memo this task's evidence touches, across all iterations
-				const allTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
-				const taskSourceIds = new Set(allTaskEvidence.map((e) => e.source_id));
-				const taskSourceMemos = sourceMemos.filter((m) => taskSourceIds.has(m.source_id));
-				const memoDigest = taskSourceMemos
-					.map((m) => `- [${m.source_id}] ${m.purpose}: ${m.key_findings.join("; ")} (limits: ${m.limitations.join("; ") || "none"})`)
-					.join("\n");
-				const memo = await llmJson<{ key_findings: string[]; limitations: string[]; open_issues: string[] }>(
-					deps.handle, TASK_MEMO_TOOL, TASK_MEMO_SYSTEM,
-					taskMemoPrompt(task, memoDigest || allTaskEvidence.map((e) => `- ${e.claim}`).join("\n") || "(no evidence found)"),
-					{ signal: deps.signal, temperature: 0.3 },
-				);
-				taskMemos.push({
-					task_id: task.id,
-					key_findings: memo.key_findings,
-					limitations: [...memo.limitations, ...memo.open_issues.map((i) => `open: ${i}`)],
-					relevant_claims: allTaskEvidence.map((e) => e.id),
-					created_at: new Date().toISOString(),
-				});
-				await store.saveTaskMemos(taskMemos);
-
-				task.status = "done";
-				task.summary = memo.key_findings[0];
-				await store.saveTasks(tasks);
-				progress(`✓ ${task.id} done — ${newEvidence.length} evidence, ${newMemos.length} source memos`);
-
-				if (taskNovelHits >= 2) consecutiveLowNovelty++;
-				else consecutiveLowNovelty = 0;
+				taskActions++;
+				if (taskActions > MAX_ATTEMPTS_PER_TASK * 2) break;
 			}
+
+			// ── verify safety net (§15 — ensures corroboration even if model didn't choose verify) ──
+			const postTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
+			const sourceFamilyMap = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
+			const singleSourced = postTaskEvidence.filter((e) => {
+				if (e.confidence < 0.6) return false;
+				const sameClaimFamilies = new Set(
+					postTaskEvidence
+						.filter((e2) => sharesEntityAndValue(e.claim, e2.claim) || e2.claim.includes(e.claim.slice(0, 40)))
+						.map((e2) => sourceFamilyMap.get(e2.source_id))
+						.filter(Boolean) as string[],
+				);
+				return sameClaimFamilies.size < 2;
+			});
+			if (singleSourced.length > 0 && task.priority >= 5 && sources.length < config.max_sources - 2) {
+				checkAbort();
+				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced claims`);
+				const claimToVerify = singleSourced[0];
+				const verifyQueries = [
+					`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
+					`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
+				];
+				const verifyResults: SearchResult[] = [];
+				for (const vq of verifyQueries) {
+					try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
+				}
+				const verifyRanked = rankResults(verifyResults)
+					.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
+					.slice(0, 3);
+				for (const res of verifyRanked) {
+					checkAbort();
+					if (sources.length >= config.max_sources) break;
+					let vdoc;
+					try { vdoc = await ingestUrl(res.url, { signal: deps.signal, maxChars: 40_000, timeoutMs: 45_000 }); }
+					catch { continue; }
+					if (vdoc.text.trim().length < 200) continue;
+					const vdup = checkDuplicate(res.url, vdoc.text, sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) })));
+					if (vdup.isDuplicate) continue;
+					const vpassages = chunkDocument(vdoc.text);
+					const vselected = selectPassages(task.question, vpassages, EXTRACT_CHAR_BUDGET);
+					const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
+					const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
+						extractPrompt(task, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
+					const vlist = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
+					if (vlist.length === 0) continue;
+					const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords });
+					const vcomposite = compositeQuality(vfeatures);
+					const vsid = `s${sources.length + 1}`;
+					sources.push({ id: vsid, url: res.url, url_canonical: canonicalUrl(res.url), title: vdoc.title || res.title,
+						publisher: hostOf(res.url), source_family: detectSourceFamily(res.url, hostOf(res.url)), date: vdoc.date,
+						quality: qualityLabel(vcomposite), quality_features: vfeatures, hash: contentHash(vdoc.text),
+						fingerprint: simhash(vdoc.text).toString(16) });
+					await store.saveRawSource(vsid, vdoc.text);
+					for (const e of vlist) {
+						await store.appendEvidence({ id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: vsid,
+							claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
+						meta.stats.evidence_extracted++;
+					}
+						// source memo for verify source
+						const vsmemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
+							deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
+							sourceMemoPrompt(task.question, vdoc.title, res.url,
+								vlist.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
+							{ signal: deps.signal, temperature: 0.2 });
+						sourceMemos.push({ source_id: vsid, ...vsmemo, relevant_claims: [] });
+						await store.saveSourceMemos(sourceMemos);
+
+					meta.stats.sources_ingested = sources.length;
+					await store.saveSources(sources); await store.saveMeta(meta);
+					progress(`    +${vlist.length} evidence (verify) — ${hostOf(res.url)}`);
+				}
+				await store.log("verify_safety_net", { task: task.id, claims_checked: singleSourced.length });
+			}
+
+			// task memo (§13.3)
+			task.state = "resolving";
+			const allTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
+			const taskSourceIds = new Set(allTaskEvidence.map((e) => e.source_id));
+			const taskSourceMemos = sourceMemos.filter((m) => taskSourceIds.has(m.source_id));
+			const memoDigest = taskSourceMemos.map((m) => `- [${m.source_id}] ${m.purpose}: ${m.key_findings.join("; ")}`).join("\n");
+			const memo = await llmJson<{ key_findings: string[]; limitations: string[]; open_issues: string[] }>(
+				deps.handle, TASK_MEMO_TOOL, TASK_MEMO_SYSTEM,
+				taskMemoPrompt(task, memoDigest || allTaskEvidence.map((e) => `- ${e.claim}`).join("\n") || "(no evidence found)"),
+				{ signal: deps.signal, temperature: 0.3 });
+			taskMemos.push({ task_id: task.id, key_findings: memo.key_findings,
+				limitations: [...memo.limitations, ...memo.open_issues.map((i) => `open: ${i}`)],
+				relevant_claims: allTaskEvidence.map((e) => e.id), created_at: new Date().toISOString() });
+			await store.saveTaskMemos(taskMemos);
+
+			task.status = "done"; task.state = "complete"; task.summary = memo.key_findings[0];
+			await store.saveTasks(tasks);
+			progress(`✓ ${task.id} done (${allTaskEvidence.length} evidence, ${task.search_attempts} actions)`);
+
+			meta.stats.iterations++;
+			await store.saveMeta(meta);
 
 			// gap detection + dynamic task discovery (§16)
 			meta.stats.iterations++;
@@ -412,7 +453,7 @@ export async function runResearch(
 
 			// dynamic tasks depend on everything completed so far (§4.1 task graph)
 			const doneIds = tasks.filter((t) => t.status === "done").map((t) => t.id);
-			for (const sq of gap.new_subquestions.slice(0, 3)) {
+			for (const sq of gap.new_subquestions.slice(0, 5)) {
 				if (tasks.length >= MAX_TOTAL_TASKS) break;
 				if (config.max_iterations - meta.stats.iterations < 2) break;
 				if (tasks.some((t) => t.question === sq)) continue;
@@ -422,7 +463,12 @@ export async function runResearch(
 					priority: 6,
 					depth: 1,
 					status: "open",
-					depends_on: doneIds.slice(-2), // ties the new task into the graph
+					state: "open" as const,
+					depends_on: doneIds.slice(-2),
+					coverage: 0,
+					uncertainty: 1,
+					required_evidence: defaultRequiredEvidence(6),
+					search_attempts: 0,
 				});
 			}
 			await store.saveTasks(tasks);
@@ -580,9 +626,28 @@ export async function runResearch(
 					.filter((a, i, arr) => arr.indexOf(a) === i)
 					.map((a) => `- ${a}`)
 					.join("\n") || "(none)";
+
+				// §13 memory hierarchy retrieval: section reads Tier 4 (topic synthesis)
+				// → Tier 3 (task memos) → Tier 2 (claims with citations), not raw claims only.
+				// Match section to its dimension's topic synthesis + relevant task memos.
+				const sectionKey = section.title.toLowerCase().split(" ")[0]?.slice(0, 12) ?? "";
+				const relevantSynthesis = syntheses.find((s) =>
+					s.dimension.toLowerCase().includes(sectionKey) || section.title.toLowerCase().includes(s.dimension.toLowerCase().slice(0, 10)),
+				);
+				const relevantMemos = taskMemos
+					.filter((m) => m.key_findings.some((f) => f.toLowerCase().includes(sectionKey) ||
+						section.title.toLowerCase().split(" ").some((w) => w.length > 4 && f.toLowerCase().includes(w))))
+					.slice(0, 4);
+
+				const hierarchyBundle = [
+					relevantSynthesis ? `### Topic Synthesis (${relevantSynthesis.dimension})\n${relevantSynthesis.synthesis}` : "",
+					relevantMemos.length > 0 ? `### Task Findings\n${relevantMemos.map((m) => `- ${m.key_findings.join("; ")}${m.limitations.length ? ` (limits: ${m.limitations.slice(0,2).join("; ")})` : ""}`).join("\n")}` : "",
+					bundle ? `### Verified Claims\n${bundle}` : "",
+				].filter(Boolean).join("\n\n") || "(no citation-ready claims — state this gap)";
+
 				const draft = await llmText(
 					deps.handle, SECTION_SYSTEM,
-					sectionPrompt(meta.spec!, section, bundle || "(no citation-ready claims — state this gap)", assumptions),
+					sectionPrompt(meta.spec!, section, hierarchyBundle, assumptions),
 					{ signal: deps.signal, temperature: 0.4, maxTokens: 4000, timeoutMs: 180_000 },
 				);
 				return { section, draft };

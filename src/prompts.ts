@@ -138,7 +138,7 @@ export const EXTRACT_TOOL = {
 // ── Phase 5: gap detection ───────────────────────────────────────────────
 export const GAP_SYSTEM = controlPlane(
 	"gap",
-	`Your sole directive is to review research progress against the specification and identify what is NOT adequately answered: single-sourced claims, missing dimensions, unquantified claims, untested counterarguments, unresolved contradictions. Be strict but do not manufacture gaps — recommend continuing ONLY if the objective is genuinely under-supported.`,
+	`Your sole directive is to review research progress and dynamically expand the research plan. Like a human researcher who reads a few papers and realizes new dimensions matter: (1) identify what is NOT adequately answered — single-sourced claims, missing dimensions, unquantified claims, untested counterarguments, unresolved contradictions; (2) PROPOSE new sub-questions for dimensions the evidence reveals as important but that the original plan missed (aim for 3-5 new sub-questions when the evidence genuinely opens new avenues); (3) DISMISS tasks that turn out irrelevant to the objective (mark them with an empty new_subquestions and should_continue=false for that area); (4) KEEP indirectly-related findings because they provide context even if not directly decision-relevant. Be aggressive about expanding scope when the evidence warrants it — this is how deep research discovers the dimensions that shallow research misses. Recommend continuing whenever meaningful gaps exist, even if some dimensions are covered.`,
 );
 
 export function gapPrompt(spec: Spec, tasks: Task[], evidenceDigest: string, contradictionDigest: string): string {
