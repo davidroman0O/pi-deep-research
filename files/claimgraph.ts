@@ -20,11 +20,7 @@ export function clusterClaims(evidence: Evidence[]): Evidence[][] {
 			if (used.has(evidence[j].id)) continue;
 			const sim = jaccard(tokenSets[i], tokenSets[j]);
 			const sameMetric = sharedValueKey(evidence[i], evidence[j]);
-			// §9.2 entity+value corroboration: merge if different sources share
-			// a significant entity AND a numeric value (within tolerance), even if
-			// text similarity is low. This is the canonicalization the transcript demands.
-			const sameEntityValue = sharesEntityAndValue(evidence[i].claim, evidence[j].claim);
-			if (sim >= 0.25 || (sim >= 0.15 && sameMetric) || sameEntityValue) {
+			if (sim >= 0.25 || (sim >= 0.15 && sameMetric)) {
 				cluster.push(evidence[j]);
 				used.add(evidence[j].id);
 			}
@@ -166,33 +162,6 @@ function sharedValueKey(a: Evidence, b: Evidence): boolean {
 	if (ka.length === 0) return false;
 	const kb = new Set(Object.keys(b.values ?? {}));
 	return ka.some((k) => kb.has(k));
-}
-
-/** §9.2 entity+value canonicalization: do two claim texts share a significant entity AND a numeric value? */
-export function sharesEntityAndValue(textA: string, textB: string): boolean {
-	const entA = extractEntitiesFromText(textA);
-	const entB = extractEntitiesFromText(textB);
-	if (entA.size === 0) return false;
-	const sharedEntity = [...entA].some((e) => entB.has(e));
-	if (!sharedEntity) return false;
-	const valA = extractNumbersFromText(textA);
-	const valB = extractNumbersFromText(textB);
-	if (valA.length === 0 || valB.length === 0) return false;
-	return valA.some((v) => valB.some((ov) => Math.abs(v - ov) / Math.max(v, ov, 1) < 0.1));
-}
-
-function extractEntitiesFromText(text: string): Set<string> {
-	const s = new Set<string>();
-	for (const m of text.matchAll(/\b([A-Z][a-z]{3,}|[A-Z]{2,}\d*|[A-Z]{2,}-\d+)\b/g)) s.add(m[1].toLowerCase());
-	return s;
-}
-function extractNumbersFromText(text: string): number[] {
-	const out: number[] = [];
-	for (const m of text.matchAll(/(\d[\d,.]*)/g)) {
-		const n = Number(m[1].replace(/,/g, ""));
-		if (!Number.isNaN(n) && n > 100) out.push(n);
-	}
-	return out;
 }
 function avg(xs: number[]): number {
 	return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0;

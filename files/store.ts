@@ -35,7 +35,6 @@ export interface Source {
 	url: string;
 	title: string;
 	publisher?: string;
-	source_family?: string; // syndication chain root — Reuters→blog→press-release share a family (DRH C4/F2)
 	date?: string;
 	quality: "high" | "medium" | "low" | "unknown";
 	hash: string; // dedupe key

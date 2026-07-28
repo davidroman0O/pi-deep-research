@@ -5,8 +5,6 @@
 //   1. canonical URL normalization (strip tracking params, lowercase host)
 //   2. content hash (exact dup)
 //   3. SimHash-style near-duplicate fingerprint (catches minor edits / mirrors)
-//   4. source-family / syndication-chain detection (DRH C4/F2):
-//      Reuters → blog → company press release is NOT three independent sources.
 
 /** Canonicalize a URL for dedup: lowercase host, drop fragment, strip tracking params. */
 export function canonicalUrl(raw: string): string {
@@ -164,53 +162,4 @@ function tokenSet(s: string): Set<string> {
 			.split(/\s+/)
 			.filter((t) => t.length > 2),
 	);
-}
-
-// ── source-family / syndication-chain detection (DRH C4/F2) ───────────────
-//
-// Two sources from different publishers can still share a common origin:
-// a wire service (Reuters, AP, Bloomberg), a press release (PRNewswire,
-// GlobeNewswire), or a vendor blog republishing an announcement. These are
-// NOT independent corroboration. This function classifies a source's family
-// so the corroboration logic can distinguish genuine independence from
-// syndication.
-
-const WIRE_SERVICES = [
-	"reuters", "apnews", "ap.org", "bloomberg", "afp", "dpa", "kyodo",
-	"press association", "itanews", "xinua", "tass",
-];
-const PR_WIRES = [
-	"prnewswire", "globenewswire", "businesswire", "prweb", "einnews",
-	"marketwired", "newswire",
-];
-
-/** Detect the source family — returns the syndication root, or the publisher if independent. */
-export function detectSourceFamily(url: string, publisher: string): string {
-	const host = hostOf(url);
-	const label = `${host} ${publisher ?? ""}`.toLowerCase();
-
-	for (const w of WIRE_SERVICES) {
-		if (label.includes(w)) return `wire:${w}`;
-	}
-	for (const p of PR_WIRES) {
-		if (label.includes(p)) return `prwire:${p}`;
-	}
-	// vendor self-publication (company's own domain writing about itself)
-	return publisher ?? host;
-}
-
-/** Count genuinely independent source families among a set of sources. */
-export function countIndependentFamilies(sources: Array<{ source_family?: string; publisher?: string; url: string }>): number {
-	const families = new Set(
-		sources.map((s) => s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")),
-	);
-	return families.size;
-}
-
-function hostOf(url: string): string {
-	try {
-		return new URL(url).host.toLowerCase();
-	} catch {
-		return url.toLowerCase();
-	}
 }

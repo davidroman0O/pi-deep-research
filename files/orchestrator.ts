@@ -36,7 +36,7 @@ import {
 import { getSearchProvider, rankResults, type SearchProvider, type SearchResult } from "./search.ts";
 import { ingestUrl, type Document } from "./ingest.ts";
 import { wrapUntrusted } from "./trust.ts";
-import { canonicalUrl, contentHash, simhash, checkDuplicate, novelty, detectSourceFamily } from "./novel.ts";
+import { canonicalUrl, contentHash, simhash, checkDuplicate, novelty } from "./novel.ts";
 import { clusterClaims, buildClaim, relationInput, toEdge, type ClaimRelation } from "./claimgraph.ts";
 import { assessSourceQuality, compositeQuality, qualityLabel } from "./quality.ts";
 import { chunkDocument, selectPassages, assembleContext } from "./passage.ts";
@@ -304,65 +304,6 @@ export async function runResearch(
 				await store.saveSources(sources);
 				await store.saveSourceMemos(sourceMemos);
 				await store.saveMeta(meta);
-
-				// ── verify step (§15 verify action — DRH P0 #2) ─────────────────
-				// After extraction, check for single-sourced high-confidence claims.
-				// If found, fire a targeted corroborating search before marking done.
-				// This is the simplest form of the verify action — the full agent loop
-				// (choose_action) replaces this with a model-driven decision later.
-				const taskEvidencePostExtract = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
-				const sourceFamilyMap = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
-				const singleSourced = taskEvidencePostExtract.filter((e) => {
-					if (e.confidence < 0.6) return false;
-					const sameClaimFamilies = new Set(
-						taskEvidencePostExtract
-							.filter((e2) => e2.claim.includes(e.claim.slice(0, 40)) || e.claim.includes(e2.claim.slice(0, 40)))
-							.map((e2) => sourceFamilyMap.get(e2.source_id))
-							.filter(Boolean) as string[],
-					);
-					return sameClaimFamilies.size < 2;
-				});
-
-				if (singleSourced.length > 0 && task.priority >= 5 && sources.length < config.max_sources - 2) {
-					checkAbort();
-					progress(`⚡ Verifying ${singleSourced.length} single-sourced claim(s) for ${task.id}…`);
-					const claimToVerify = singleSourced[0];
-					const verifyQueries = [
-						`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
-						`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
-					];
-					const verifyResults: SearchResult[] = [];
-					for (const vq of verifyQueries) {
-						try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
-					}
-					const verifyRanked = rankResults(verifyResults)
-						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
-						.slice(0, 3);
-					const verifyOutcomes = await runParallel(
-						verifyRanked,
-						(res): Promise<SourceOutcome> => sourcePipeline(res, task, sources, taskEvidencePostExtract, deps, topicKeywords),
-						2, deps.signal,
-					);
-					// apply verify outcomes centrally
-					for (const vo of verifyOutcomes) {
-						if (!vo.ok || !vo.value.source) continue;
-						const vs = vo.value;
-						if (!vs.source) continue;
-						const finalId = `s${sources.length + 1}`;
-						vs.source.id = finalId;
-						for (const ev of vs.evidence) ev.source_id = finalId;
-						if (vs.memo) vs.memo.source_id = finalId;
-						if (vs.rawText) await store.saveRawSource(finalId, vs.rawText);
-						sources.push(vs.source);
-						for (const ev of vs.evidence) { ev.id = `e${meta.stats.evidence_extracted + 1}`; meta.stats.evidence_extracted++; await store.appendEvidence(ev); }
-						if (vs.memo) sourceMemos.push(vs.memo);
-					}
-					meta.stats.sources_ingested = sources.length;
-					await store.saveSources(sources);
-					await store.saveSourceMemos(sourceMemos);
-					await store.saveMeta(meta);
-					await store.log("verify_fired", { task: task.id, claims_verified: singleSourced.length, new_sources: verifyOutcomes.filter((v) => v.ok && v.value.source).length });
-				}
 
 				// task memo (LLM summarization, tier 3) — synthesized from every
 				// source memo this task's evidence touches, across all iterations
@@ -782,18 +723,12 @@ async function sourcePipeline(
 	const dup = checkDuplicate(res.url, doc.text, known);
 	if (dup.isDuplicate) return { result: res, evidence: [], skipReason: dup.reason ?? "duplicate" };
 
-	// novelty gate (§17.2) — CORRECTED per DRH review C2:
-	// low-novelty sources are skipped UNLESS they provide independent corroboration.
-	// A source from a NEW publisher that restates a known claim is corroboration — KEEP it.
-	// Only drop if low-novelty AND publisher already represented AND no new claim.
+	// novelty gate (§17.2)
 	const knownTexts = existingEvidence.map((e) => e.claim + " " + (e.quote ?? ""));
 	const nov = novelty(doc.text, knownTexts);
-	const candidatePublisher = hostOf(res.url);
-	const publisherAlreadyKnown = existingSources.some((s) => s.publisher === candidatePublisher);
-	if (nov < NOVELTY_FLOOR && knownTexts.length > 3 && publisherAlreadyKnown) {
-		return { result: res, evidence: [], skipReason: "low-novelty-same-publisher" };
+	if (nov < NOVELTY_FLOOR && knownTexts.length > 3) {
+		return { result: res, evidence: [], skipReason: "low-novelty" };
 	}
-	// low-novelty from a NEW publisher: log as corroboration-candidate, keep
 
 	// passage selection (§8): chunk → BM25 rank → budgeted context
 	const passages = chunkDocument(doc.text);
@@ -824,14 +759,12 @@ async function sourcePipeline(
 	});
 	const composite = compositeQuality(features);
 
-	const publisher = hostOf(res.url);
 	const source: Source = {
 		id: `s${existingSources.length + 1}`, // provisional; renumbered centrally
 		url: res.url,
 		url_canonical: canon,
 		title: doc.title || res.title,
-		publisher,
-		source_family: detectSourceFamily(res.url, publisher),
+		publisher: hostOf(res.url),
 		date: doc.date,
 		quality: qualityLabel(composite),
 		quality_features: features,

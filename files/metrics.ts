@@ -7,7 +7,6 @@
 //   - coverage (spec dimensions actually evidenced)
 //   - citation integrity (entailment pass rate)
 
-import { detectSourceFamily } from "./novel.ts";
 import type { Claim, Evidence, Source, Spec, ClaimEdge } from "./store.ts";
 import type { AuditReport } from "./audits.ts";
 
@@ -45,48 +44,13 @@ export function computeMetrics(
 	const publisherConcentration =
 		sources.length > 0 ? Math.max(0, ...publishers.values()) / sources.length : 0;
 
-	// source-family lookup for syndication-aware independence (DRH C4)
-	const sourceFamily = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "unknown")]));
+	// publisher lookup per source
+	const sourcePublisher = new Map(sources.map((s) => [s.id, s.publisher ?? "unknown"]));
 
-	// §9.2 corroboration-aware matching: two claims corroborate if they're from
-	// different families AND share a significant entity + a numeric value (within
-	// tolerance). This catches differently-worded claims about the same fact —
-	// e.g. "$20,139/kW FOAK" from s3 and "unit cost increased to $20,139/kW" from s6.
-	// Text jaccard alone misses these; entity+value matching is the §9.2 canonicalization.
 	let corroborated = 0;
 	for (const c of claims) {
-		const claimEvidence = evidence.filter((e) => c.evidence_ids.includes(e.id));
-		const families = new Set(
-			claimEvidence.map((e) => sourceFamily.get(e.source_id)).filter(Boolean) as string[],
-		);
-		if (families.size >= 2) {
-			corroborated++;
-			continue;
-		}
-		// fallback: entity+value matching across ALL evidence (not just this claim's)
-		// if another claim from a different family shares entity + value → corroborated
-		const cEntities = extractEntities(c.text);
-		const cValues = extractValues(c.text);
-		if (cEntities.size > 0 && cValues.length > 0) {
-			for (const other of claims) {
-				if (other.id === c.id) continue;
-				const otherEvidence = evidence.filter((e) => other.evidence_ids.includes(e.id));
-				const otherFamilies = new Set(
-					otherEvidence.map((e) => sourceFamily.get(e.source_id)).filter(Boolean) as string[],
-				);
-				// must have at least one family different from c's
-				const hasDifferentFamily = [...otherFamilies].some((f) => !families.has(f));
-				if (!hasDifferentFamily) continue;
-				const oEntities = extractEntities(other.text);
-				const oValues = extractValues(other.text);
-				const sharedEntity = [...cEntities].some((e) => oEntities.has(e));
-				const sharedValue = cValues.some((v) => oValues.some((ov) => Math.abs(v - ov) / Math.max(v, ov, 1) < 0.1));
-				if (sharedEntity && sharedValue) {
-					corroborated++;
-					break;
-				}
-			}
-		}
+		const pubs = new Set(c.source_ids.map((sid) => sourcePublisher.get(sid)).filter(Boolean) as string[]);
+		if (pubs.size >= 2) corroborated++;
 	}
 	const citationReady = claims.filter((c) => c.citation_ready).length;
 
@@ -131,23 +95,3 @@ export function metricsRow(name: string, m: ResearchMetrics): string {
 export const METRICS_HEADER =
 	"config".padEnd(28) +
 	" src pub evid  clms corr cor% contr  cov  cit conc";
-
-/** Extract significant entities from a claim (capitalized words, acronyms). */
-function extractEntities(text: string): Set<string> {
-	const entities = new Set<string>();
-	for (const m of text.matchAll(/\b([A-Z][a-z]{3,}|[A-Z]{2,}\d*|[A-Z]{2,}-\d+)\b/g)) {
-		entities.add(m[1].toLowerCase());
-	}
-	return entities;
-}
-
-/** Extract numeric values from a claim (strip formatting, parse to number). */
-function extractValues(text: string): number[] {
-	const values: number[] = [];
-	for (const m of text.matchAll(/(?:\$|€|£|CAD|USD)?\s?(\d[\d,.]*)\s*(?:\/kW\w*|\/MWh|bn|billion|million|%|MW\w*|kW\w*)?/gi)) {
-		const raw = m[1].replace(/,/g, "");
-		const n = Number(raw);
-		if (!Number.isNaN(n) && n > 100) values.push(n);
-	}
-	return values;
-}
