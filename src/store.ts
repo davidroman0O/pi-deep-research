@@ -148,6 +148,7 @@ export const DEFAULT_CONFIG: ResearchConfig = {
 /** Depth profiles — user-facing scale knobs (liberation from fixed budgets). */
 export const PROFILES: Record<string, Partial<ResearchConfig>> = {
 	quick: { breadth: 4, max_sources: 10, max_iterations: 4, max_search_queries: 3, depth: 1, citation_checks: 12 },
+	benchmark: { breadth: 4, max_sources: 15, max_iterations: 6, max_search_queries: 3, depth: 1, citation_checks: 15 },
 	standard: { breadth: 5, max_sources: 25, max_iterations: 12, max_search_queries: 4, depth: 2, citation_checks: 25 },
 	deep: { breadth: 7, max_sources: 60, max_iterations: 30, max_search_queries: 5, depth: 3, citation_checks: 40 },
 	heavy: { breadth: 10, max_sources: 120, max_iterations: 50, max_search_queries: 6, depth: 4, citation_checks: 50 },

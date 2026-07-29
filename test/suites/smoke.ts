@@ -8,7 +8,7 @@
 //
 // Usage:
 //   bun test/suites/smoke.ts                          # default topic, quick profile
-//   TOPIC="..." MODEL="zai/glm-4.5-air" bun test/suites/smoke.ts
+//   TOPIC="..." MODEL="openai-codex/gpt-5.5" bun test/suites/smoke.ts
 
 import { runCandidate } from "../runners/candidate.ts";
 import { healthCheck } from "../lib/session.ts";

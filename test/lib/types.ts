@@ -77,7 +77,7 @@ export interface Verdict {
 export interface TestConfig {
 	topic: string;
 	profile: "quick" | "standard" | "deep" | "heavy" | "ultra";
-	model?: string; // candidate model, e.g. "zai/glm-4.5-air"
+	model?: string; // candidate model, e.g. "openai-codex/gpt-5.5"
 	ttl_days?: number; // reference cache TTL (§3.2)
 	expected_dimensions?: string[];
 }

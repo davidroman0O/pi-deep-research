@@ -67,7 +67,7 @@ export function transitionState(task: Task, evidence: Evidence[], sources: Sourc
 		case "corroboration": {
 			// Check if corroboration requirements met → resolving
 			const corroborationMet = checkCorroboration(task, evidence, sources);
-			if (corroborationMet || task.search_attempts >= MAX_ATTEMPTS_PER_TASK) return "resolving";
+			if (corroborationMet) return "resolving";
 			return "corroboration";
 		}
 
@@ -84,7 +84,6 @@ export function transitionState(task: Task, evidence: Evidence[], sources: Sourc
 /** "Do I possess sufficient evidence?" — evaluates required_evidence strings against actual evidence. */
 export function isTaskComplete(task: Task, evidence: Evidence[], sources: Source[], edges: ClaimEdge[]): boolean {
 	if (task.state === "complete") return true;
-	if (task.search_attempts >= MAX_ATTEMPTS_PER_TASK) return true; // force-complete with gaps
 	if (task.state !== "resolving") return false; // corroboration phase must run before completion
 
 	const taskEvidence = evidence.filter((e) => e.task_id === task.id);
@@ -188,9 +187,9 @@ export function guardAction(
 		return { type: "summarize", taskId: action.taskId, coerced: true, reason: "budget exhausted" };
 	}
 
-	// attempt cap → force summarize (gaps will be disclosed)
-	if (task.search_attempts >= MAX_ATTEMPTS_PER_TASK && action.type !== "summarize" && action.type !== "stop") {
-		return { type: "summarize", taskId: action.taskId, coerced: true, reason: `attempt cap (${MAX_ATTEMPTS_PER_TASK})` };
+	// Search cap stops more discovery, not the verification phase it unlocks.
+	if (task.search_attempts >= MAX_ATTEMPTS_PER_TASK && action.type === "search") {
+		return { type: "summarize", taskId: action.taskId, coerced: true, reason: `search attempt cap (${MAX_ATTEMPTS_PER_TASK})` };
 	}
 
 	// state machine: action not allowed in current state → coerce to summarize

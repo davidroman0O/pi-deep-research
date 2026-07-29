@@ -60,31 +60,36 @@ export async function llmJson<T = unknown>(
 ): Promise<T> {
 	const model = opts.model ?? handle.model;
 	const auth = await handle.getAuth(model.provider);
+	const api = model.api as string;
 
-	// Enforce provider-side schema compliance where supported; "prefer" degrades
-	// gracefully on providers without constrained sampling (they still honor the
-	// tool schema — it's in the request either way).
-	tool.constrainedSampling = { type: "json_schema", strict: "prefer" };
+	// Codex rejects strict schemas whose optional fields are not OpenAI-normalized;
+	// keep the schema and forced tool call, but let that endpoint validate loosely.
+	const effectiveTool = api === "openai-codex-responses"
+		? { ...tool, constrainedSampling: undefined }
+		: { ...tool, constrainedSampling: { type: "json_schema" as const, strict: "prefer" as const } };
 
 	const context: Context = {
 		systemPrompt,
 		messages: [{ role: "user", content: [{ type: "text", text: userPrompt }], timestamp: Date.now() }],
-		tools: [tool],
+		tools: [effectiveTool],
 	};
 
 	// Force the tool call. Without this, some providers answer in prose and the
 	// structured phase contract breaks. Anthropic/Google/Mistral use "any";
-	// OpenAI chat-completions uses "required".
-	const api = model.api as string;
+	// OpenAI APIs use "required".
 	const toolChoice =
-		api === "openai-completions" ? "required" : "any";
+		api === "openai-completions" || api === "openai-responses" ||
+		api === "azure-openai-responses" || api === "openai-codex-responses"
+			? "required"
+			: "any";
 
 	const baseOptions = {
 		apiKey: auth?.apiKey,
 		headers: auth?.headers,
 		env: auth?.env,
 		signal: opts.signal,
-		temperature: opts.temperature,
+		// ChatGPT's Codex endpoint rejects temperature outright.
+		temperature: api === "openai-codex-responses" ? undefined : opts.temperature,
 		maxTokens: opts.maxTokens,
 		timeoutMs: opts.timeoutMs,
 		maxRetries: 2,
@@ -164,7 +169,7 @@ export async function llmText(
 				headers: auth?.headers,
 				env: auth?.env,
 				signal: opts.signal,
-				temperature: opts.temperature,
+				temperature: model.api === "openai-codex-responses" ? undefined : opts.temperature,
 				maxTokens: opts.maxTokens,
 				timeoutMs: opts.timeoutMs,
 				maxRetries: 2,

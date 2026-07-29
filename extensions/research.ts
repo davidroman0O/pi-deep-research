@@ -25,10 +25,21 @@ export default function (pi: ExtensionAPI) {
 			model,
 			getAuth: async (providerId: string) => {
 				try {
-					return (await reg.getProviderAuth(providerId)) ?? null;
-				} catch {
-					return null;
-				}
+					const resolved = await reg.getProviderAuth(providerId);
+					if (resolved) return { ...resolved.auth, env: resolved.env };
+				} catch {}
+				// Fallback: read OAuth/API key from ~/.pi/agent/auth.json
+				// Needed for openai-codex (OAuth) when getProviderAuth returns null
+				try {
+					const { readFileSync } = await import("node:fs");
+					const { join } = await import("node:path");
+					const { getAgentDir } = await import("@earendil-works/pi-coding-agent");
+					const all = JSON.parse(readFileSync(join(getAgentDir(), "auth.json"), "utf8"));
+					const pa = all[providerId];
+					if (pa?.type === "oauth" && pa.access) return { apiKey: pa.access };
+					if (pa?.apiKey) return { apiKey: pa.apiKey };
+				} catch {}
+				return null;
 			},
 		};
 	}
