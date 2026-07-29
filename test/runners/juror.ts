@@ -54,7 +54,7 @@ export const JUROR_TOOL = {
 /**
 // Generate two blind juror prompts (original + swapped).
 // A/B labels are randomly assigned to eliminate position bias (§3.3).
- *
+//
 // @returns the two prompts + the label mapping (which is A/B in each run)
  */
 export function generatePrompts(
@@ -190,7 +190,7 @@ function normalizeJurorRun(raw: Record<string, unknown>): JurorRun {
 
 /**
 // Aggregate two swapped juror runs into a single Verdict.
- *
+//
 // Run 1 has A=ours, B=drh (or vice versa).
 // Run 2 has the labels swapped.
 // This function unswaps both to a canonical "ours/dr" orientation,

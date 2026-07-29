@@ -6,18 +6,18 @@
 //   3. Generate blind juror prompts (swapped ×2)
 //   4. [Delegated] Run juror evaluations via gpt_chat agent mode
 //   5. Aggregate verdict + apply pass/fail gate
- *
+//
 // The juror step (4) requires gpt_chat, which is a Pi session tool.
 // When run standalone, this suite:
 //   - Completes steps 1-3
 //   - Saves juror prompts to disk
 //   - Prints instructions for running the juror
 //   - Exits with code 0 (prompts ready)
- *
+//
 // When run from within a Pi session (e.g., autoresearch with interactive_shell),
 // the caller can automate step 4 and then call aggregate:
 //   bun test/suites/judge.ts --aggregate <slug>
- *
+//
 // Usage:
 //   bun test/suites/judge.ts                           # run candidate + generate prompts
 //   bun test/suites/judge.ts --aggregate <slug>        # aggregate existing juror runs

@@ -47,7 +47,7 @@ export async function recordVerdict(topic: string, verdict: Verdict): Promise<vo
 
 /**
 // Calibrate the threshold from historical data (§5.1).
- *
+//
 // Logic:
 // - If we have ≥3 historical verdicts, compute the median ratio.
 // - Set threshold to 90% of the median ratio (so the candidate can usually pass).

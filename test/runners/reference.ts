@@ -21,11 +21,11 @@ export interface ReferenceResult {
 
 /**
 // Get the DRH reference report for a topic.
- *
+//
 // - If cached and fresh → return it.
 // - If cached but stale (TTL expired) → invalidate, return regenerate=true.
 // - If not cached → return regenerate=true with instructions.
- *
+//
 // The caller is responsible for actually running gpt_chat deep_research_heavy
 // and saving the result via saveReference().
  */

@@ -3,7 +3,7 @@
 // The CHEAP inner loop for autoresearch optimization. Uses deterministic
 // metrics only — no LLM juror, no DRH reference. The expensive juror
 // runs on a slower cadence via judge.ts (§9.2).
- *
+//
 // Emits METRIC lines that autoresearch reads as the quality_score:
 //   METRIC quality_score=<proxy composite>
 //   METRIC citation_integrity=<proxy score>
@@ -12,9 +12,9 @@
 //   METRIC factual_accuracy=<proxy score>
 //   METRIC contradiction_handling=<proxy score>
 //   METRIC passed=<0|1>
- *
+//
 // Hard gates (§9.2): factual_accuracy and citation_integrity must not decrease.
- *
+//
 // Usage:
 //   bun test/suites/autoresearch-measure.ts               # default topic
 //   TOPIC="..." MODEL="..." bun test/suites/autoresearch-measure.ts

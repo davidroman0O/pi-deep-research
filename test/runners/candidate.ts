@@ -17,7 +17,7 @@ import type { TestConfig, CandidateResult } from "../lib/types.ts";
 
 /**
 // Run the candidate (our dr_research) on a topic via a real Pi session.
- *
+//
 // @returns the report text, the run directory, and deterministic metrics.
 // @throws if the agent doesn't call dr_research or no report is produced.
  */
