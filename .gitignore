@@ -4,5 +4,7 @@ node_modules
 .env
 logs/
 .pi-subagents/
-docs/internalstest/results/
+docs/internals
+test/results/
+docs/internals/**
 test/results/threshold-history.json
