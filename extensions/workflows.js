@@ -135,11 +135,10 @@ const drOptimize = {
   input: {
     type: "object",
     properties: {
-      topic: { type: "string", description: "Research topic to optimize against" },
-      max_attempts: { type: "integer", description: "Max patch attempts if first fails hard gate" },
+      topic: { type: "string" },
+      max_attempts: { type: "integer" },
     },
     required: ["topic"],
-    additionalProperties: false,
   },
   output: {
     type: "object",
@@ -153,9 +152,9 @@ const drOptimize = {
       hard_gate_status: { type: "object" },
     },
     required: ["old_score", "new_score", "kept"],
-    additionalProperties: false,
   },
   async run(input, context) {
+    context.log("DEBUG drOptimize input: " + JSON.stringify(input));
     const topic = String(input.topic);
     const maxAttempts = input.max_attempts ?? 3;
 
@@ -408,7 +407,23 @@ const drWorkflowExtension = {
   version: "1.0.0",
   headline: "pi-deep-research autoresearch",
   description: "Autonomous optimization and judging workflows for pi-deep-research.",
-  functions: { drOptimize, drJudge },
+  functions: {
+    drPing: {
+      description: "Test function.",
+      input: {
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        additionalProperties: false,
+      },
+      output: { type: "string" },
+      run(input) {
+        return "Hello, " + String(input.name) + "!";
+      },
+    },
+    drOptimize,
+    drJudge,
+  },
 };
 
 export default function extension() {
