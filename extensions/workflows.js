@@ -162,7 +162,7 @@ const drOptimize = {
     context.phase("baseline-measure");
     const baselineRes = await context.shell(
       'TOPIC="' + topic + '" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts',
-      { timeoutMs: 600000 }
+      { timeoutMs: 7200000 }
     );
     const baselineMetrics = parseMetrics(baselineRes.stdout);
     const oldScore = baselineMetrics.quality_score ?? 0;
@@ -187,7 +187,7 @@ const drOptimize = {
           required: ["diff", "rationale", "files_read"],
           additionalProperties: false,
         },
-        timeoutMs: null,
+        timeoutMs: 7200000,
       });
 
       const patch = patchResult?.diff ?? "";
@@ -228,7 +228,7 @@ const drOptimize = {
       // Run measure with patch applied
       const measureRes = await context.shell(
         'TOPIC="' + topic + '" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts',
-        { timeoutMs: 600000 }
+        { timeoutMs: 7200000 }
       );
       const newMetrics = parseMetrics(measureRes.stdout);
       const newScore = newMetrics.quality_score ?? 0;
@@ -342,7 +342,7 @@ const drJudge = {
     // Phase 1: CANDIDATE
     context.phase("candidate");
     context.log("Running candidate (dr_research)...");
-    await context.shell('TOPIC="' + topic + '" MODEL="zai/glm-4.5-air" bun test/suites/smoke.ts', { timeoutMs: 600000 });
+    await context.shell('TOPIC="' + topic + '" MODEL="zai/glm-4.5-air" bun test/suites/smoke.ts', { timeoutMs: 7200000 });
     const reportRes = await context.shell("cat test/results/" + slug + "/ours_report.md", { timeoutMs: 5000 });
     const oursReport = reportRes.stdout;
     if (!oursReport || oursReport.length < 100) throw new Error("Candidate report missing");
