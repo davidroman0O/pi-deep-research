@@ -187,7 +187,7 @@ const drOptimize = {
           required: ["diff", "rationale", "files_read"],
           additionalProperties: false,
         },
-        timeoutMs: 600000,
+        timeoutMs: null,
       });
 
       const patch = patchResult?.diff ?? "";
@@ -359,7 +359,7 @@ const drJudge = {
       context.log("Generating DRH reference via gpt_chat...");
       const refResult = await context.agent(
         'Call gpt_chat with chat_type: "deep_research_heavy" to research: "' + topic + '". Return the full report text.',
-        { label: "drh-reference", tools: ["gpt_chat"], timeoutMs: 1800000,
+        { label: "drh-reference", tools: ["gpt_chat"], timeoutMs: null,
           outputSchema: { type: "object", properties: { report: { type: "string" } }, required: ["report"], additionalProperties: false } }
       );
       drhReport = refResult?.report ?? "";
@@ -381,11 +381,11 @@ const drJudge = {
     const jurorResults = await context.parallel("juror", {
       run1: () => context.agent(jurorPrompt(topic, reportA, reportB), {
         label: "juror-run-1", model: "openai-codex/gpt-5.6-sol", thinking: "max",
-        outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: 300000,
+        outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: null,
       }),
       run2: () => context.agent(jurorPrompt(topic, reportB, reportA), {
         label: "juror-run-2", model: "openai-codex/gpt-5.6-sol", thinking: "max",
-        outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: 300000,
+        outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: null,
       }),
     });
 

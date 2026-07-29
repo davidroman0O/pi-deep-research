@@ -371,13 +371,13 @@ export async function runResearch(
 					// ponytail: skip if an earlier verify this pass already lifted this claim to ≥2 families
 					// — cheap family recount avoids a wasted search+ingest round.
 					const famNow = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
-					const famCount = new Set(
+					const targetFamilies = new Set(
 						(await store.loadEvidence())
 							.filter((e2) => e2.task_id === task.id && (sharesEntityAndValue(claimToVerify.claim, e2.claim) || e2.claim.includes(claimToVerify.claim.slice(0, 40))))
 							.map((e2) => famNow.get(e2.source_id))
 							.filter(Boolean) as string[],
-					).size;
-					if (famCount >= 2) continue;
+					);
+					if (targetFamilies.size >= 2) continue;
 					verifyClaimsTried++;
 					const verifyQueries = [
 						`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
@@ -388,7 +388,8 @@ export async function runResearch(
 						try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
 					}
 					const verifyRanked = rankResults(verifyResults)
-						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
+						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)) &&
+							!targetFamilies.has(detectSourceFamily(r.url, hostOf(r.url))))
 						.slice(0, 3);
 					for (const res of verifyRanked) {
 						checkAbort();
@@ -399,11 +400,16 @@ export async function runResearch(
 						if (vdoc.text.trim().length < 200) continue;
 						const vdup = checkDuplicate(res.url, vdoc.text, sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) })));
 						if (vdup.isDuplicate) continue;
+						const verifyTask: Task = {
+							...task,
+							question: `Find independent evidence that supports, contradicts, or qualifies this exact claim: ${claimToVerify.claim}`,
+							completion_test: "Extract only evidence about that exact claim; return an empty evidence array for adjacent facts.",
+						};
 						const vpassages = chunkDocument(vdoc.text);
-						const vselected = selectPassages(task.question, vpassages, EXTRACT_CHAR_BUDGET);
+						const vselected = selectPassages(verifyTask.question, vpassages, EXTRACT_CHAR_BUDGET);
 						const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
 						const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
-							extractPrompt(task, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
+							extractPrompt(verifyTask, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
 						const vlist = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
 						if (vlist.length === 0) continue;
 						const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords });
@@ -419,18 +425,20 @@ export async function runResearch(
 								claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
 							meta.stats.evidence_extracted++;
 						}
-							// source memo for verify source
-							const vsmemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
-								deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
-								sourceMemoPrompt(task.question, vdoc.title, res.url,
-									vlist.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
-								{ signal: deps.signal, temperature: 0.2 });
-							sourceMemos.push({ source_id: vsid, ...vsmemo, relevant_claims: [] });
-							await store.saveSourceMemos(sourceMemos);
+						// source memo for verify source
+						const vsmemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
+							deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
+							sourceMemoPrompt(verifyTask.question, vdoc.title, res.url,
+								vlist.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
+							{ signal: deps.signal, temperature: 0.2 });
+						sourceMemos.push({ source_id: vsid, ...vsmemo, relevant_claims: [] });
+						await store.saveSourceMemos(sourceMemos);
 
 						meta.stats.sources_ingested = sources.length;
 						await store.saveSources(sources); await store.saveMeta(meta);
 						progress(`    +${vlist.length} evidence (verify) — ${hostOf(res.url)}`);
+						// ponytail: one independent hit resolves this pass; spend the budget on the next claim.
+						break;
 					}
 				}
 				await store.log("verify_safety_net", { task: task.id, single_sourced: singleSourced.length, corroborated: verifyClaimsTried });
