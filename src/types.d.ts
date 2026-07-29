@@ -16,6 +16,13 @@ declare module "turndown" {
 	}
 }
 
+declare module "pi-extensible-workflows" {
+	export function registerWorkflowExtension(extension: any): void;
+	export const workflowCatalog: any;
+	export const beginWorkflowExtensionLoading: any;
+	export const resetWorkflowRegistry: any;
+}
+
 declare module "pdf-parse" {
 	const pdfParse: (buf: Buffer) => Promise<{
 		text?: string;
