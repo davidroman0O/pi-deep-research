@@ -6,7 +6,8 @@
 //   - Completion test evaluation (§4.2 — "sufficient evidence?" not "did I search?")
 //   - Default required_evidence policies by priority (§2.5/§11.2)
 
-import type { Task, TaskState, Evidence, Claim, Source, ClaimEdge } from "./store.ts";
+import type { Task, TaskState, Evidence, Source, ClaimEdge } from "./store.ts";
+import { clusterClaims } from "./claimgraph.ts";
 import { detectSourceFamily } from "./novel.ts";
 
 // ── safety constants (§2.6) ──────────────────────────────────────────────
@@ -84,6 +85,7 @@ export function transitionState(task: Task, evidence: Evidence[], sources: Sourc
 export function isTaskComplete(task: Task, evidence: Evidence[], sources: Source[], edges: ClaimEdge[]): boolean {
 	if (task.state === "complete") return true;
 	if (task.search_attempts >= MAX_ATTEMPTS_PER_TASK) return true; // force-complete with gaps
+	if (task.state !== "resolving") return false; // corroboration phase must run before completion
 
 	const taskEvidence = evidence.filter((e) => e.task_id === task.id);
 	const taskSources = sources.filter((s) => taskEvidence.some((e) => e.source_id === s.id));
@@ -124,18 +126,20 @@ function evaluateRequiredEvidence(task: Task, evidence: Evidence[], sources: Sou
 	return true;
 }
 
-/** Check if corroboration requirements are met (≥2 independent families with relevant evidence). */
+/** Check if a majority of high-confidence claim clusters have independent support. */
 function checkCorroboration(task: Task, evidence: Evidence[], sources: Source[]): boolean {
 	const taskEvidence = evidence.filter((e) => e.task_id === task.id && e.confidence >= 0.5);
 	if (taskEvidence.length === 0) return true; // nothing to corroborate
 
-	const familiesWithHighConfEvidence = new Set(
-		taskEvidence.map((e) => {
-			const src = sources.find((s) => s.id === e.source_id);
-			return src?.source_family ?? detectSourceFamily(src?.url ?? "", src?.publisher ?? "");
-		}),
+	const familyBySource = new Map(
+		sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]),
 	);
-	return familiesWithHighConfEvidence.size >= 2;
+	const clusters = clusterClaims(taskEvidence);
+	if (clusters.length === 0) return true;
+	const corroborated = clusters.filter((cluster) =>
+		new Set(cluster.map((e) => familyBySource.get(e.source_id)).filter(Boolean)).size >= 2,
+	).length;
+	return corroborated > clusters.length / 2;
 }
 
 // ── action safety guards (§2.6) ──────────────────────────────────────────

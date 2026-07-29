@@ -239,7 +239,12 @@ export async function runResearch(
 				if (isBudgetExhausted(budget)) { progress(`  ⚠ budget exhausted`); break; }
 
 				// model chooses action (§15)
-				const snapshot = buildSnapshot(meta.spec!, tasks, _allClaims, _allEdges, sources, config,
+				// The persisted claim graph is built after this loop; expose live claims when verify is actionable.
+				const { clusterClaims } = await import("./claimgraph.ts");
+				const snapshotClaims = task.state === "corroboration"
+					? clusterClaims(taskEvidence).map((cluster, i) => ({ id: `live-${task.id}-${i + 1}`, text: cluster[0]?.claim ?? "", status: "unknown", supporting_evidence: [], contradicting_evidence: [], assumptions: [], confidence: Math.max(...cluster.map((e) => e.confidence)), citation_ready: false, evidence_ids: cluster.map((e) => e.id), source_ids: [...new Set(cluster.map((e) => e.source_id))] }))
+					: _allClaims;
+				const snapshot = buildSnapshot(meta.spec!, tasks, snapshotClaims, _allEdges, sources, config,
 					covMatrix.dimensions.filter((d) => d.status === "complete").map((d) => d.name),
 					covMatrix.openDimensions);
 				const action = await chooseAction(deps.handle, task, snapshot, deps.signal);
@@ -250,7 +255,7 @@ export async function runResearch(
 				progress(`  ▸ ${guarded.type}${guarded.coerced ? " (coerced)" : ""} — ${action.reason?.slice(0, 60) ?? ""}`);
 
 				budget.actionsUsed++;
-				task.search_attempts++;
+				if (guarded.type === "search") task.search_attempts++;
 
 				if (guarded.type === "stop" || guarded.type === "summarize") break;
 
@@ -449,7 +454,7 @@ export async function runResearch(
 			const allTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
 			const taskSourceIds = new Set(allTaskEvidence.map((e) => e.source_id));
 			const taskSourceMemos = sourceMemos.filter((m) => taskSourceIds.has(m.source_id));
-			const memoDigest = taskSourceMemos.map((m) => `- [${m.source_id}] ${m.purpose}: ${m.key_findings.join("; ")}`).join("\n");
+			const memoDigest = taskSourceMemos.map((m) => `- [${m.source_id}] ${m.purpose}: ${(m.key_findings ?? []).join("; ")}`).join("\n");
 			const memo = await llmJson<{ key_findings: string[]; limitations: string[]; open_issues: string[] }>(
 				deps.handle, TASK_MEMO_TOOL, TASK_MEMO_SYSTEM,
 				taskMemoPrompt(task, memoDigest || allTaskEvidence.map((e) => `- ${e.claim}`).join("\n") || "(no evidence found)"),
@@ -671,7 +676,7 @@ export async function runResearch(
 
 				const hierarchyBundle = [
 					relevantSynthesis ? `### Topic Synthesis (${relevantSynthesis.dimension})\n${relevantSynthesis.synthesis}` : "",
-					relevantMemos.length > 0 ? `### Task Findings\n${relevantMemos.map((m) => `- ${m.key_findings.join("; ")}${m.limitations.length ? ` (limits: ${m.limitations.slice(0,2).join("; ")})` : ""}`).join("\n")}` : "",
+					relevantMemos.length > 0 ? `### Task Findings\n${relevantMemos.map((m) => `- ${(m.key_findings ?? []).join("; ")}${(m.limitations ?? []).length ? ` (limits: ${(m.limitations ?? []).slice(0,2).join("; ")})` : ""}`).join("\n")}` : "",
 					bundle ? `### Verified Claims\n${bundle}` : "",
 				].filter(Boolean).join("\n\n") || "(no citation-ready claims — state this gap)";
 

@@ -154,7 +154,6 @@ const drOptimize = {
     required: ["old_score", "new_score", "kept"],
   },
   async run(input, context) {
-    context.log("DEBUG drOptimize input: " + JSON.stringify(input));
     const topic = String(input.topic);
     const maxAttempts = input.max_attempts ?? 3;
 

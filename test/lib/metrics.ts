@@ -18,18 +18,18 @@ import type { RunMetrics } from "./types.ts";
  */
 export async function computeRunMetrics(cwd: string): Promise<RunMetrics | null> {
 	const researchDir = join(cwd, ".pi", "research");
-	if (!existsSync(researchDir)) return null;
+	if (!existsSync(researchDir)) { console.error("  [metrics] no .pi/research/ at " + cwd); return null; }
 
-	const runDirs = await readFile(researchDir).then(
-		() => import("node:fs/promises").then((m) => m.readdir(researchDir)),
-	).catch(() => []);
-	if (runDirs.length === 0) return null;
+	const { readdir } = await import("node:fs/promises");
+	let runDirs: string[] = [];
+	try { runDirs = await readdir(researchDir); } catch { return null; }
+	if (runDirs.length === 0) { console.error("  [metrics] no run dirs"); return null; }
 
 	const runId = runDirs[0];
 	const store = new RunStore(cwd, runId);
 
 	const metaPath = store.metaFile();
-	if (!existsSync(metaPath)) return null;
+	if (!existsSync(metaPath)) { console.error("  [metrics] no run.json at " + metaPath); return null; }
 
 	const meta = await store.loadMeta();
 	const sources = await store.loadSources();
@@ -38,7 +38,8 @@ export async function computeRunMetrics(cwd: string): Promise<RunMetrics | null>
 	const edges = await store.loadEdges();
 
 	const auditPath = store.auditFile();
-	if (!existsSync(auditPath) || !meta?.spec) return null;
+	if (!existsSync(auditPath)) { console.error("  [metrics] no audit.json at " + auditPath + " (sources=" + sources.length + ", evidence=" + evidence.length + ", claims=" + claims.length + ")"); return null; }
+	if (!meta?.spec) { console.error("  [metrics] no spec in run.json"); return null; }
 
 	const audit = JSON.parse(await readFile(auditPath, "utf8"));
 	const m = computeMetrics(meta.spec, sources, evidence, claims, edges, audit);
