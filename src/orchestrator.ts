@@ -354,7 +354,11 @@ export async function runResearch(
 				);
 				return sameClaimFamilies.size < 2;
 			});
-			if (singleSourced.length > 0 && task.priority >= 5 && sources.length < config.max_sources - 2) {
+			// ponytail: no priority gate — the source-cap guard below already bounds
+			// cost, and high-priority tasks run first so they can't be starved.
+			// Gating on priority left low-priority tasks' high-confidence claims
+			// permanently single-sourced, capping corroboratedFraction.
+			if (singleSourced.length > 0 && sources.length < config.max_sources - 2) {
 				checkAbort();
 				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced claims`);
 				const claimToVerify = singleSourced[0];

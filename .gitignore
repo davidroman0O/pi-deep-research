@@ -1,7 +1,8 @@
 node_modules
 .DS_Store
-.pi
+.pi/loops.json
 .env
 logs/
 .pi-subagents/
-docs/internals
+docs/internalstest/results/
+test/results/threshold-history.json

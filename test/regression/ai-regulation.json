@@ -1,4 +1,15 @@
 {
   "topic": "What are the current EU and US regulations on AI systems as of 2026?",
-  "expected_dimensions": ["EU AI Act", "US executive orders", "risk classification", "compliance requirements", "enforcement", "sector-specific rules", "international alignment", "impact on developers"]
+  "expected_dimensions": [
+    "EU AI Act",
+    "US executive orders",
+    "risk classification",
+    "compliance requirements",
+    "enforcement",
+    "sector-specific rules",
+    "international alignment",
+    "impact on developers"
+  ],
+  "profile": "standard",
+  "ttl_days": 90
 }

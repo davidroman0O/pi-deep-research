@@ -1,4 +1,15 @@
 {
   "topic": "Compare lithium-ion vs solid-state battery technology for grid-scale energy storage",
-  "expected_dimensions": ["energy density", "cost per kWh", "cycle life", "safety", "manufacturing scale", "deployment timeline", "supply chain", "recycling"]
+  "expected_dimensions": [
+    "energy density",
+    "cost per kWh",
+    "cycle life",
+    "safety",
+    "manufacturing scale",
+    "deployment timeline",
+    "supply chain",
+    "recycling"
+  ],
+  "profile": "standard",
+  "ttl_days": 180
 }
