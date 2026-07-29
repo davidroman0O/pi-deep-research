@@ -32,21 +32,160 @@ function checkHardGates(metrics) {
   return { violated: violations.length > 0, violations, factual, citation };
 }
 
+// ── the optimizer system prompt (XML-structured per state-of-art 2026) ──
+
+function buildOptimizerPrompt(metrics) {
+  return [
+    "<system_prompt>",
+    "You are the Code Optimization Agent for pi-deep-research.",
+    "Your job: improve the research quality of a deep-research engine by modifying its source code.",
+    "You operate autonomously — no human review. Your changes must be correct, targeted, and safe.",
+    "</system_prompt>",
+    "",
+    "<project_context>",
+    "## What pi-deep-research IS",
+    "",
+    "pi-deep-research is a deep-research extension for the Pi coding agent, designed to match",
+    "ChatGPT Deep Research Heavy quality. It implements a full §14 dynamic research controller:",
+    "a model-driven action loop over a dynamic task graph, with coverage-driven task selection,",
+    "EIG-weighted action choice, and evidence-based completion tests.",
+    "",
+    "The `dr_research` tool IS the harness: the orchestrator drives the whole loop programmatically,",
+    "and every LLM step is a native tool call (schema-enforced via pi-ai constrained sampling).",
+    "",
+    "## Architecture",
+    "",
+    "```",
+    "dr_research(topic, { profile: 'standard' })",
+    "  │",
+    "  ├─ Phase 1  specification          tool call → research spec (objective, dimensions, freshness)",
+    "  ├─ Phase 2  decomposition          tool call → task graph (atomic subquestions, priorities)",
+    "  │",
+    "  ├─ Phase 3-5  DYNAMIC LOOP (controller action loop)",
+    "  │     refresh coverage matrix (deterministic)",
+    "  │     should_stop? (model decides max-EIG, code applies caps)",
+    "  │     select_next_task (model reads coverage matrix, picks highest gap)",
+    "  │     choose_action (model picks: search/read/verify/extract/gap_check)",
+    "  │     execute_action → evidence → claim graph update",
+    "  │     discover_new_tasks (dynamic expansion)",
+    "  │",
+    "  ├─ Phase 6  claim graph            cluster evidence → claims; relation classification",
+    "  ├─ Phase 6b topic syntheses        per-dimension conclusions",
+    "  ├─ Phase 7  sectioned synthesis    outline → parallel section drafts → assemble",
+    "  └─ Phase 8  audits + repair        citation entailment + 8 static audits",
+    "```",
+    "",
+    "## Source files (ALL in src/) — you MUST read every one before proposing changes",
+    "",
+    "- src/orchestrator.ts (1058 lines) — MAIN RESEARCH LOOP. The action loop that drives",
+    "  the whole pipeline. Contains choose_action dispatch, task management, budget enforcement.",
+    "- src/controller.ts (199 lines) — Action executor dispatch + safety guards. Task state",
+    "  machine, completion tests, default required_evidence policies.",
+    "- src/coverage.ts (114 lines) — Deterministic coverage matrix builder. Computes which",
+    "  dimensions have evidence, corroboration, contradictions. Drives task selection.",
+    "- src/policy.ts (140 lines) — Task selection + action policy + stop policy. The model's",
+    "  decision interface for what to do next.",
+    "- src/prompts.ts (500 lines) — Content-generation prompts: spec decomposition, evidence",
+    "  extraction, gap checking, synthesis, section drafts, citation entailment. THESE PROMPTS",
+    "  DIRECTLY DETERMINE OUTPUT QUALITY.",
+    "- src/prompts-policy.ts (126 lines) — Decision prompts: choose_action, gap_check,",
+    "  task_selector, stop_policy. The controller's reasoning prompts.",
+    "- src/metrics.ts (153 lines) — Research-quality measurement: corroboration fraction,",
+    "  citation pass rate, source diversity, publisher concentration. THIS IS HOW QUALITY IS MEASURED.",
+    "- src/claimgraph.ts (208 lines) — Claim clustering + relation classification (supports/",
+    "  contradicts/qualifies). Entity+value matching for cross-source corroboration.",
+    "- src/audits.ts (202 lines) — Citation entailment (reverse map: sentence→claim→evidence→",
+    "  source) + 9 audit passes (coverage, claims, citations, contradictions, freshness, etc.).",
+    "- src/novel.ts (216 lines) — Dedup + source-family detection. SimHash for near-dup,",
+    "  syndication chain detection (Reuters→blog→press-release share a family).",
+    "- src/trust.ts (101 lines) — Trust scoring + source quality. Prompt-injection defense.",
+    "- src/quality.ts (113 lines) — Quality gate enforcement. Hard gates for factual + citation.",
+    "- src/store.ts (374 lines) — Durable research run state. Task/Evidence/Claim/Source types.",
+    "  Memory tiers: raw, evidence, memos, claims, audit.",
+    "- src/search.ts (199 lines) — Search backends: Exa, ScrapeGraphAI, Tavily, DDG.",
+    "- src/ingest.ts (227 lines) — Fetch + parse + trust layer. HTML→readability, PDF→pdf-parse.",
+    "- src/passage.ts (150 lines) — BM25 passage selection. Chunks → ranked context window budget.",
+    "- src/llm.ts (186 lines) — Tool-calling with constrained sampling + retry. Native tool calls.",
+    "- src/config.ts (97 lines) — Backend selection + key resolution.",
+    "- src/parallel.ts (40 lines) — Parallel execution utility.",
+    "",
+    "## Key quality problem being solved",
+    "",
+    "The #1 weakness is CORROBORATION: only ~10% of claims are backed by ≥2 independent",
+    "publishers (target: >50%). ChatGPT DR Heavy achieves near-100%. The root causes are:",
+    "1. The novelty gate kills corroborating sources (same story from different publishers)",
+    "2. Claim clustering uses text similarity, missing entity+value matches across phrasings",
+    "3. The verify action isn't chosen often enough by the controller",
+    "4. Source-family detection doesn't catch all syndication chains",
+    "",
+    "## How metrics map to quality",
+    "",
+    "- quality_score: composite of all proxy scores (weighted sum)",
+    "- factual_accuracy: proxy from corroboration fraction (THE KEY METRIC)",
+    "- citation_integrity: proxy from citation pass rate (entailment audit)",
+    "- coverage: dimensions covered / total dimensions in spec",
+    "- source_quality: publisher diversity (1 - max publisher share)",
+    "- contradiction_handling: were contradictions acknowledged (not averaged)",
+    "",
+    "## Hard constraints (MUST NOT violate)",
+    "",
+    "1. factual_accuracy proxy must stay ≥ 3/5",
+    "2. citation_integrity proxy must stay ≥ 3/5",
+    "3. No TypeScript compilation errors (bunx tsc --noEmit must pass)",
+    "4. Changes must be backward-compatible with the existing dr_research tool API",
+    "</project_context>",
+    "",
+    "<current_metrics>",
+    JSON.stringify(metrics, null, 2),
+    "</current_metrics>",
+    "",
+    "<instructions>",
+    "## Your task",
+    "",
+    "1. READ every file in src/ — use the read tool on each file listed above.",
+    "   Do NOT skip any. You need full context before proposing a change.",
+    "   Track what you've read in your reasoning.",
+    "",
+    "2. ANALYZE the weakest metric. The current metrics are shown above.",
+    "   Identify the ROOT CAUSE in the code — not a symptom.",
+    "   Trace the data flow: where does this metric get computed? What feeds it?",
+    "",
+    "3. PROPOSE a targeted fix. One change at a time. Small, surgical diffs.",
+    "   Prefer changing prompts (src/prompts.ts, src/prompts-policy.ts) over logic changes,",
+    "   because prompts directly control what the model does at each stage.",
+    "   If the issue is algorithmic (e.g., corroboration detection), fix the logic.",
+    "",
+    "4. GENERATE a unified diff. The diff must apply cleanly with `git apply`.",
+    "   Include enough context lines for git to find the insertion point.",
+    "",
+    "## What NOT to do",
+    "",
+    "- Do NOT add new dependencies",
+    "- Do NOT refactor working code for style",
+    "- Do NOT change the dr_research tool signature or return type",
+    "- Do NOT break TypeScript compilation",
+    "- Do NOT add comments explaining your change (the diff speaks for itself)",
+    "</instructions>",
+    "",
+    "<output_format>",
+    "Return a JSON object via the output schema:",
+    "- diff: a unified diff (git diff format) that applies cleanly",
+    "- rationale: ONE sentence explaining the root cause you identified and how your patch addresses it",
+    "- files_read: array of all src/*.ts files you actually read (for verification)",
+    "</output_format>",
+  ].join("\n");
+}
+
 // ── drOptimize: one optimization iteration ──────────────────────────────
 
 const drOptimize = {
-  description: "Run one autonomous optimization iteration for pi-deep-research.",
+  description: "Run one autonomous optimization iteration for pi-deep-research. Uses gpt-5.6-sol (max thinking) to read the entire codebase, identify the root cause of the weakest metric, and generate a targeted patch.",
   input: {
     type: "object",
     properties: {
       topic: {
         type: "string",
         description: "Research topic to optimize against",
-      },
-      target_files: {
-        type: "array",
-        items: { type: "string" },
-        description: "Files the optimizer agent may modify",
       },
       max_attempts: {
         type: "integer",
@@ -64,6 +203,7 @@ const drOptimize = {
       delta: { type: "number" },
       kept: { type: "boolean" },
       patch_summary: { type: "string" },
+      files_read: { type: "array", items: { type: "string" } },
       hard_gate_status: { type: "object" },
     },
     required: ["old_score", "new_score", "kept"],
@@ -71,160 +211,118 @@ const drOptimize = {
   },
   async run(input, context) {
     const topic = String(input.topic);
-    const targetFiles = input.target_files ?? [
-      "src/prompts.ts",
-      "src/prompts-policy.ts",
-      "src/orchestrator.ts",
-    ];
     const maxAttempts = input.max_attempts ?? 3;
 
+    // ── Phase 1: BASELINE MEASURE ────────────────────────────────────
     context.phase("baseline-measure");
 
-    // ── Phase 1: BASELINE MEASURE ────────────────────────────────────
     const baselineRes = await context.shell(
       `TOPIC="${topic}" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts`,
       { timeoutMs: 600000 },
     );
 
-    if (baselineRes.exitCode !== null && baselineRes.exitCode !== 0 && !baselineRes.stdout.includes("METRIC")) {
-      throw new Error(`Baseline measure failed: ${baselineRes.stderr || baselineRes.stdout}`);
-    }
-
     const baselineMetrics = parseMetrics(baselineRes.stdout);
     const oldScore = baselineMetrics.quality_score ?? 0;
-    context.log(`Baseline: quality_score=${oldScore.toFixed(4)}`);
+    context.log(`Baseline: quality_score=${oldScore.toFixed(4)} corroboration=${baselineMetrics.corroboration ?? 0}`);
 
     // ── Phase 2-N: PATCH ATTEMPTS ────────────────────────────────────
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       context.phase(`patch-attempt-${attempt}`);
+      context.log(`Launching optimizer (gpt-5.6-sol, max thinking)...`);
 
-      // Generate patch
-      const metricsStr = JSON.stringify(baselineMetrics, null, 2);
       const patchResult = await context.agent(
-        context.prompt(
-          `You are optimizing pi-deep-research.\n\n` +
-          `Current metrics:\n{metrics}\n\n` +
-          `You may modify these files: {files}\n\n` +
-          `Focus on the weakest criterion. Generate a small, targeted patch.\n` +
-          `Return ONLY the JSON via the output schema.`,
-          { metrics: metricsStr, files: targetFiles.join(", ") },
-        ),
+        buildOptimizerPrompt(baselineMetrics),
         {
           label: `optimizer-attempt-${attempt}`,
-          role: "optimizer",
+          model: "openai-codex/gpt-5.6-sol",
+          thinking: "max",
           outputSchema: {
             type: "object",
             properties: {
-              diff: { type: "string", description: "Unified diff" },
-              rationale: { type: "string", description: "One-sentence rationale" },
+              diff: { type: "string", description: "Unified diff (git diff format)" },
+              rationale: { type: "string", description: "Root cause + how patch addresses it" },
+              files_read: { type: "array", items: { type: "string" } },
             },
-            required: ["diff", "rationale"],
+            required: ["diff", "rationale", "files_read"],
             additionalProperties: false,
           },
+          timeoutMs: 600000,
         },
       );
 
       const patch = patchResult?.diff ?? "";
       const rationale = patchResult?.rationale ?? "";
+      const filesRead = patchResult?.files_read ?? [];
+
+      context.log(`Optimizer read ${filesRead.length} files. Rationale: ${rationale}`);
 
       if (!patch.trim()) {
-        context.log(`Attempt ${attempt}: no patch generated (${rationale})`);
+        context.log(`Attempt ${attempt}: no patch generated`);
         continue;
       }
 
-      // ── Phase 3: IN-PLACE TEST (worktree when clean, in-place when dirty) ─
+      // ── Phase 3: TEST PATCH ──────────────────────────────────────
       context.phase(`test-attempt-${attempt}`);
 
-      // Check if we can use a worktree (requires committed state)
-      const gitStatusRes = await context.shell(
-        `git diff --quiet HEAD 2>/dev/null && echo "CLEAN" || echo "DIRTY"`,
-        { timeoutMs: 5000 },
+      // Write patch to temp file
+      await context.shell(
+        `cat > __optimize.patch << 'PATCH_EOF'\n${patch}\nPATCH_EOF`,
+        { timeoutMs: 10000 },
       );
-      const gitClean = gitStatusRes.stdout.trim() === "CLEAN";
 
-      let newMetrics;
+      const applyRes = await context.shell(
+        `git apply --check __optimize.patch 2>&1 && git apply __optimize.patch 2>&1`,
+        { timeoutMs: 10000 },
+      );
 
-      if (gitClean) {
-        // Worktree path: isolated branch, safe to discard
-        newMetrics = await context.withWorktree(`optimize-attempt`, async ({ path: wtPath }) => {
-          const patchFile = `${wtPath}/__optimize.patch`;
-          await context.shell(
-            `cat > "${patchFile}" << 'PATCH_EOF'\n${patch}\nPATCH_EOF`,
-            { timeoutMs: 10000 },
-          );
-          const applyRes = await context.shell(
-            `cd "${wtPath}" && git apply --check "${patchFile}" 2>&1 && git apply "${patchFile}" 2>&1`,
-            { timeoutMs: 10000 },
-          );
-          if (applyRes.exitCode !== 0) {
-            context.log(`Patch apply failed: ${applyRes.stderr || applyRes.stdout}`);
-            return null;
-          }
-          const measureRes = await context.shell(
-            `cd "${wtPath}" && TOPIC="${topic}" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts`,
-            { timeoutMs: 600000 },
-          );
-          return parseMetrics(measureRes.stdout);
-        });
-      } else {
-        // In-place path: stash → apply → measure → decide → revert/keep
-        context.log(`Git dirty — using in-place patch test`);
-
-        const patchFile = `${context.run.cwd}/__optimize.patch`;
-        await context.shell(
-          `cat > "${patchFile}" << 'PATCH_EOF'\n${patch}\nPATCH_EOF`,
-          { timeoutMs: 10000 },
-        );
-        const applyRes = await context.shell(
-          `git apply --check "${patchFile}" 2>&1 && git apply "${patchFile}" 2>&1`,
-          { timeoutMs: 10000 },
-        );
-
-        if (applyRes.exitCode !== 0) {
-          context.log(`Patch apply failed: ${applyRes.stderr || applyRes.stdout}`);
-          await context.shell(`rm -f "${patchFile}"`, { timeoutMs: 5000 });
-          continue;
-        }
-
-        const measureRes = await context.shell(
-          `TOPIC="${topic}" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts`,
-          { timeoutMs: 600000 },
-        );
-        newMetrics = parseMetrics(measureRes.stdout);
-
-        // Revert the patch (will re-apply if we decide to keep)
-        await context.shell(`git apply -R "${patchFile}"`, { timeoutMs: 10000 });
-      }
-
-      if (!newMetrics) {
-        context.log(`Attempt ${attempt}: patch failed to apply or measure failed`);
+      if (applyRes.exitCode !== 0) {
+        context.log(`Patch apply failed: ${applyRes.stderr || applyRes.stdout}`);
+        await context.shell(`rm -f __optimize.patch`, { timeoutMs: 5000 });
         continue;
       }
 
+      // TypeScript check before running expensive measure
+      const tscRes = await context.shell(`bunx tsc --noEmit 2>&1`, { timeoutMs: 60000 });
+      if (tscRes.exitCode !== 0) {
+        context.log(`TypeScript compilation failed after patch. Reverting.`);
+        context.log(tscRes.stderr.slice(0, 500));
+        await context.shell(`git apply -R __optimize.patch`, { timeoutMs: 10000 });
+        await context.shell(`rm -f __optimize.patch`, { timeoutMs: 5000 });
+        continue;
+      }
+      context.log(`TypeScript OK. Running measure...`);
+
+      // Run measure with patch applied
+      const measureRes = await context.shell(
+        `TOPIC="${topic}" MODEL="zai/glm-4.5-air" bun test/suites/autoresearch-measure.ts`,
+        { timeoutMs: 600000 },
+      );
+
+      const newMetrics = parseMetrics(measureRes.stdout);
       const newScore = newMetrics.quality_score ?? 0;
       const gateStatus = checkHardGates(newMetrics);
       const delta = newScore - oldScore;
 
       context.log(
         `Attempt ${attempt}: score ${oldScore.toFixed(4)} → ${newScore.toFixed(4)} ` +
-        `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(4)}, gates=${gateStatus.violated ? "FAIL" : "OK"})`,
+        `(delta=${delta >= 0 ? "+" : ""}${delta.toFixed(4)}, ` +
+        `corroboration=${(newMetrics.corroboration ?? 0).toFixed(4)}, ` +
+        `gates=${gateStatus.violated ? "FAIL" : "OK"})`,
       );
+
+      // Revert the patch (will re-apply if we decide to keep)
+      await context.shell(`git apply -R __optimize.patch`, { timeoutMs: 10000 });
 
       // ── Phase 4: AUTONOMOUS DECISION ─────────────────────────────
       const improved = delta > 0.001;
       const gatesOk = !gateStatus.violated;
 
       if (improved && gatesOk) {
-        // KEEP
+        // KEEP: re-apply the patch
         context.phase(`merge`);
-        if (gitClean) {
-          await context.shell(`git merge optimize-attempt --no-edit`, { timeoutMs: 30000 });
-          context.log(`Merged optimize-attempt branch`);
-        } else {
-          await context.shell(`git apply "${patchFile}"`, { timeoutMs: 10000 });
-          await context.shell(`rm -f "${patchFile}"`, { timeoutMs: 5000 });
-          context.log(`Re-applied patch (in-place)`);
-        }
+        await context.shell(`git apply __optimize.patch`, { timeoutMs: 10000 });
+        await context.shell(`rm -f __optimize.patch`, { timeoutMs: 5000 });
+        context.log(`PATCH KEPT — score improved by ${delta.toFixed(4)}`);
 
         return {
           old_score: oldScore,
@@ -232,30 +330,30 @@ const drOptimize = {
           delta,
           kept: true,
           patch_summary: rationale,
+          files_read: filesRead,
           hard_gate_status: gateStatus,
         };
       }
 
       if (!gatesOk && attempt < maxAttempts) {
-        // RETRY with feedback
         context.log(`Hard gate violated: ${gateStatus.violations.join(", ")}. Retrying...`);
-        if (!gitClean) await context.shell(`rm -f "${patchFile}"`, { timeoutMs: 5000 });
+        await context.shell(`rm -f __optimize.patch`, { timeoutMs: 5000 });
         continue;
       }
 
       // DISCARD
-      if (!gitClean) await context.shell(`rm -f "${patchFile}"`, { timeoutMs: 5000 });
+      await context.shell(`rm -f __optimize.patch`, { timeoutMs: 5000 });
       return {
         old_score: oldScore,
         new_score: newScore,
         delta,
         kept: false,
         patch_summary: gatesOk ? rationale : `Hard gate violated: ${gateStatus.violations.join(", ")}`,
+        files_read: filesRead,
         hard_gate_status: gateStatus,
       };
     }
 
-    // All attempts exhausted
     return {
       old_score: oldScore,
       new_score: oldScore,
@@ -325,7 +423,7 @@ Use the FULL range — do not default to 3 for everything:
 RUBRIC (9 criteria, weighted):
 1. factual_accuracy (20%): Are claims correct? Numbers properly represented? Caveats preserved?
 2. citation_integrity (20%): Do cited sources actually support adjacent claims? Distinguish specific claims (must cite) from common knowledge (uncited OK).
-3. source_quality (15%): Primary sources? Independent? Diverse publishers? Penalize citation spam (many weak sources ≠ good diversity).
+3. source_quality (15%): Primary sources? Independent? Diverse publishers? Penalize citation spam.
 4. coverage (15%): Does it fully answer the research question?
 5. contradiction_handling (10%): Does it surface disagreements rather than averaging?
 6. analytical_depth (5%): Does it synthesize novel insights beyond summarizing sources?
@@ -333,16 +431,8 @@ RUBRIC (9 criteria, weighted):
 8. structure_actionability (5%): Well-organized? Can a decision-maker act on it?
 9. conciseness (5%): Is every sentence earning its place? Penalize filler/repetition.
 
-For each criterion:
-- Score A (1-5)
-- Score B (1-5)
-- One-sentence justification for the scores
-
-Then state:
-- composite_A (weighted sum, 0-5)
-- composite_B (weighted sum, 0-5)
-- preference: "A", "B", or "tie"
-- confidence: "high", "medium", or "low"
+For each criterion: Score A (1-5), Score B (1-5), one-sentence justification.
+Then: composite_A, composite_B, preference, confidence.
 
 Return ONLY the JSON via the output schema.`;
 }
@@ -375,22 +465,15 @@ const drJudge = {
     const useCached = input.use_cached_reference ?? true;
     const slug = slugify(topic);
 
+    // ── Phase 1: CANDIDATE ──────────────────────────────────────────
     context.phase("candidate");
     context.log(`Running candidate (dr_research) on: ${topic.slice(0, 60)}...`);
 
-    // ── Phase 1: CANDIDATE ──────────────────────────────────────────
-    // Use our existing smoke suite — it creates a Pi session, calls dr_research,
-    // computes metrics, saves report to test/results/<slug>/ours_report.md
     const candidateRes = await context.shell(
       `TOPIC="${topic}" MODEL="zai/glm-4.5-air" bun test/suites/smoke.ts`,
       { timeoutMs: 600000 },
     );
 
-    if (candidateRes.exitCode !== 0) {
-      throw new Error(`Candidate run failed: ${candidateRes.stderr || candidateRes.stdout}`);
-    }
-
-    // Read the report
     const reportReadRes = await context.shell(
       `cat test/results/${slug}/ours_report.md`,
       { timeoutMs: 5000 },
@@ -398,7 +481,7 @@ const drJudge = {
     const oursReport = reportReadRes.stdout;
 
     if (!oursReport || oursReport.length < 100) {
-      throw new Error(`Candidate report too short or missing at test/results/${slug}/ours_report.md`);
+      throw new Error(`Candidate report missing at test/results/${slug}/ours_report.md`);
     }
 
     context.log(`Candidate report: ${oursReport.split(/\s+/).length} words`);
@@ -440,7 +523,6 @@ const drJudge = {
       );
       drhReport = refResult?.report ?? "";
 
-      // Save the reference
       await context.shell(
         `mkdir -p test/results/${slug} && cat > test/results/${slug}/drh_report.md << 'REF_EOF'\n${drhReport}\nREF_EOF`,
         { timeoutMs: 10000 },
@@ -469,7 +551,7 @@ const drJudge = {
       run1: () =>
         context.agent(jurorPrompt(topic, reportA, reportB), {
           label: "juror-run-1",
-          model: "gpt-5.6-sol",
+          model: "openai-codex/gpt-5.6-sol",
           thinking: "max",
           outputSchema: JUROR_OUTPUT_SCHEMA,
           timeoutMs: 300000,
@@ -477,7 +559,7 @@ const drJudge = {
       run2: () =>
         context.agent(jurorPrompt(topic, reportB, reportA), {
           label: "juror-run-2",
-          model: "gpt-5.6-sol",
+          model: "openai-codex/gpt-5.6-sol",
           thinking: "max",
           outputSchema: JUROR_OUTPUT_SCHEMA,
           timeoutMs: 300000,
@@ -487,7 +569,6 @@ const drJudge = {
     // ── Phase 4: AGGREGATE ──────────────────────────────────────────
     context.phase("aggregate");
 
-    // Save juror runs and labels
     await context.shell(
       `cat > test/results/${slug}/juror-run1.json << 'J1_EOF'\n${JSON.stringify(jurorResults.run1, null, 2)}\nJ1_EOF`,
       { timeoutMs: 5000 },
@@ -501,15 +582,12 @@ const drJudge = {
       { timeoutMs: 5000 },
     );
 
-    // Aggregate using our existing gate logic
     const aggregateRes = await context.shell(
       `bun test/suites/judge.ts --aggregate ${slug}`,
       { timeoutMs: 60000 },
     );
 
     const passed = aggregateRes.exitCode === 0;
-
-    // Parse verdict from the METRIC lines
     const verdictMetrics = parseMetrics(aggregateRes.stdout);
 
     return {
@@ -531,7 +609,6 @@ const drWorkflowExtension = {
     drOptimize,
     drJudge,
   },
-  roleDirectories: [new URL("./roles/", import.meta.url)],
 };
 
 export default function extension() {

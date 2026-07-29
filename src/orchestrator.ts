@@ -112,6 +112,7 @@ const MAX_TOTAL_TASKS = 40;
 const TASK_CONCURRENCY = 2; // tasks researched in parallel (§26 bounded fan-out)
 const SOURCE_CONCURRENCY = 3; // sources ingested/extracted in parallel per task
 const EXTRACT_CHAR_BUDGET = 14_000; // §13.2 budgeted context assembly
+const VERIFY_SAFETY_NET_CLAIMS = 3; // §15 — corroborate up to N single-sourced claims/task (was 1)
 
 export async function runResearch(
 	topic: string,
@@ -360,62 +361,79 @@ export async function runResearch(
 			// permanently single-sourced, capping corroboratedFraction.
 			if (singleSourced.length > 0 && sources.length < config.max_sources - 2) {
 				checkAbort();
-				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced claims`);
-				const claimToVerify = singleSourced[0];
-				const verifyQueries = [
-					`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
-					`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
-				];
-				const verifyResults: SearchResult[] = [];
-				for (const vq of verifyQueries) {
-					try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
-				}
-				const verifyRanked = rankResults(verifyResults)
-					.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
-					.slice(0, 3);
-				for (const res of verifyRanked) {
-					checkAbort();
-					if (sources.length >= config.max_sources) break;
-					let vdoc;
-					try { vdoc = await ingestUrl(res.url, { signal: deps.signal, maxChars: 40_000, timeoutMs: 45_000 }); }
-					catch { continue; }
-					if (vdoc.text.trim().length < 200) continue;
-					const vdup = checkDuplicate(res.url, vdoc.text, sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) })));
-					if (vdup.isDuplicate) continue;
-					const vpassages = chunkDocument(vdoc.text);
-					const vselected = selectPassages(task.question, vpassages, EXTRACT_CHAR_BUDGET);
-					const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
-					const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
-						extractPrompt(task, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
-					const vlist = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
-					if (vlist.length === 0) continue;
-					const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords });
-					const vcomposite = compositeQuality(vfeatures);
-					const vsid = `s${sources.length + 1}`;
-					sources.push({ id: vsid, url: res.url, url_canonical: canonicalUrl(res.url), title: vdoc.title || res.title,
-						publisher: hostOf(res.url), source_family: detectSourceFamily(res.url, hostOf(res.url)), date: vdoc.date,
-						quality: qualityLabel(vcomposite), quality_features: vfeatures, hash: contentHash(vdoc.text),
-						fingerprint: simhash(vdoc.text).toString(16) });
-					await store.saveRawSource(vsid, vdoc.text);
-					for (const e of vlist) {
-						await store.appendEvidence({ id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: vsid,
-							claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
-						meta.stats.evidence_extracted++;
+				const claimsToVerify = [...singleSourced]
+					.sort((a, b) => b.confidence - a.confidence)
+					.slice(0, VERIFY_SAFETY_NET_CLAIMS);
+				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced — corroborating ${claimsToVerify.length}`);
+				let verifyClaimsTried = 0;
+				for (const claimToVerify of claimsToVerify) {
+					if (sources.length >= config.max_sources - 2) break;
+					// ponytail: skip if an earlier verify this pass already lifted this claim to ≥2 families
+					// — cheap family recount avoids a wasted search+ingest round.
+					const famNow = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
+					const famCount = new Set(
+						(await store.loadEvidence())
+							.filter((e2) => e2.task_id === task.id && (sharesEntityAndValue(claimToVerify.claim, e2.claim) || e2.claim.includes(claimToVerify.claim.slice(0, 40))))
+							.map((e2) => famNow.get(e2.source_id))
+							.filter(Boolean) as string[],
+					).size;
+					if (famCount >= 2) continue;
+					verifyClaimsTried++;
+					const verifyQueries = [
+						`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
+						`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
+					];
+					const verifyResults: SearchResult[] = [];
+					for (const vq of verifyQueries) {
+						try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
 					}
-						// source memo for verify source
-						const vsmemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
-							deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
-							sourceMemoPrompt(task.question, vdoc.title, res.url,
-								vlist.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
-							{ signal: deps.signal, temperature: 0.2 });
-						sourceMemos.push({ source_id: vsid, ...vsmemo, relevant_claims: [] });
-						await store.saveSourceMemos(sourceMemos);
+					const verifyRanked = rankResults(verifyResults)
+						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
+						.slice(0, 3);
+					for (const res of verifyRanked) {
+						checkAbort();
+						if (sources.length >= config.max_sources) break;
+						let vdoc;
+						try { vdoc = await ingestUrl(res.url, { signal: deps.signal, maxChars: 40_000, timeoutMs: 45_000 }); }
+						catch { continue; }
+						if (vdoc.text.trim().length < 200) continue;
+						const vdup = checkDuplicate(res.url, vdoc.text, sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) })));
+						if (vdup.isDuplicate) continue;
+						const vpassages = chunkDocument(vdoc.text);
+						const vselected = selectPassages(task.question, vpassages, EXTRACT_CHAR_BUDGET);
+						const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
+						const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
+							extractPrompt(task, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
+						const vlist = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
+						if (vlist.length === 0) continue;
+						const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords });
+						const vcomposite = compositeQuality(vfeatures);
+						const vsid = `s${sources.length + 1}`;
+						sources.push({ id: vsid, url: res.url, url_canonical: canonicalUrl(res.url), title: vdoc.title || res.title,
+							publisher: hostOf(res.url), source_family: detectSourceFamily(res.url, hostOf(res.url)), date: vdoc.date,
+							quality: qualityLabel(vcomposite), quality_features: vfeatures, hash: contentHash(vdoc.text),
+							fingerprint: simhash(vdoc.text).toString(16) });
+						await store.saveRawSource(vsid, vdoc.text);
+						for (const e of vlist) {
+							await store.appendEvidence({ id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: vsid,
+								claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
+							meta.stats.evidence_extracted++;
+						}
+							// source memo for verify source
+							const vsmemo = await llmJson<{ purpose: string; key_findings: string[]; limitations: string[] }>(
+								deps.handle, SOURCE_MEMO_TOOL, SOURCE_MEMO_SYSTEM,
+								sourceMemoPrompt(task.question, vdoc.title, res.url,
+									vlist.map((e) => `- ${e.claim}${e.conditions ? ` (${e.conditions})` : ""}`).join("\n")),
+								{ signal: deps.signal, temperature: 0.2 });
+							sourceMemos.push({ source_id: vsid, ...vsmemo, relevant_claims: [] });
+							await store.saveSourceMemos(sourceMemos);
 
-					meta.stats.sources_ingested = sources.length;
-					await store.saveSources(sources); await store.saveMeta(meta);
-					progress(`    +${vlist.length} evidence (verify) — ${hostOf(res.url)}`);
+						meta.stats.sources_ingested = sources.length;
+						await store.saveSources(sources); await store.saveMeta(meta);
+						progress(`    +${vlist.length} evidence (verify) — ${hostOf(res.url)}`);
+					}
 				}
-				await store.log("verify_safety_net", { task: task.id, claims_checked: singleSourced.length });
+				await store.log("verify_safety_net", { task: task.id, single_sourced: singleSourced.length, corroborated: verifyClaimsTried });
 			}
 
 			// task memo (§13.3)
