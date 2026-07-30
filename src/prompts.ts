@@ -272,12 +272,12 @@ export const TOPIC_SYNTH_TOOL = {
 // ── Phase 6: relation classification (contradiction detection) ───────────
 export const RELATION_SYSTEM = controlPlane(
 	"relate",
-	`Your sole directive is to classify the relationship between two claims. Respect condition compatibility: differing geography, dates, units, methodology, or scenario assumptions means the claims describe different worlds, not a contradiction. A true contradiction requires same subject, compatible conditions, and logically opposed content.`,
+	`Your sole directive is to classify the relationship between two claims. A duplicate is the same atomic proposition: same subject, polarity, value, unit, scope/date, and compatible explicit conditions; wording and acronyms may differ. Supports means a distinct proposition that reinforces the other, remains a graph edge, and must never merge. Respect condition compatibility: differing geography, dates, units, methodology, or scenario assumptions means the claims describe different worlds, not a contradiction. A true contradiction requires same subject, compatible conditions, and logically opposed content.`,
 );
 
-export function relationPrompt(ctx: { claimA: string; claimB: string; conditionsA?: string; conditionsB?: string }): string {
-	return `<claim_a conditions="${ctx.conditionsA ?? "none stated"}">${ctx.claimA}</claim_a>
-<claim_b conditions="${ctx.conditionsB ?? "none stated"}">${ctx.claimB}</claim_b>
+export function relationPrompt(ctx: { claimA: string; claimB: string; conditionsA?: string; conditionsB?: string; propositionA?: string; propositionB?: string }): string {
+	return `<claim_a conditions="${escapeXmlAttr(ctx.conditionsA ?? "none stated")}" proposition_key="${escapeXmlAttr(ctx.propositionA ?? "none")}">${escapeXml(ctx.claimA)}</claim_a>
+<claim_b conditions="${escapeXmlAttr(ctx.conditionsB ?? "none stated")}" proposition_key="${escapeXmlAttr(ctx.propositionB ?? "none")}">${escapeXml(ctx.claimB)}</claim_b>
 
 Classify the relation via the tool.`;
 }
@@ -288,7 +288,7 @@ export const RELATION_TOOL = {
 	parameters: Type.Object({
 		relation: Type.Union(
 			[Type.Literal("supports"), Type.Literal("contradicts"), Type.Literal("qualifies"), Type.Literal("duplicate"), Type.Literal("unrelated")],
-			{ description: "unrelated = different subjects; supports/contradicts/qualifies = same subject, compatible conditions." },
+			{ description: "duplicate = same atomic proposition with identical subject/polarity/value/unit/scope/date and compatible conditions; supports = distinct reinforcing proposition kept as an edge; unrelated = different subjects." },
 		),
 		reason: Type.Optional(Type.String()),
 	}),

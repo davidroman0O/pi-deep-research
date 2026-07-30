@@ -37,7 +37,16 @@ import { getSearchProvider, rankResults, type SearchProvider, type SearchResult 
 import { ingestUrl, type Document } from "./ingest.ts";
 import { wrapUntrusted } from "./trust.ts";
 import { canonicalUrl, contentHash, simhash, checkDuplicate, novelty, detectSourceFamily } from "./novel.ts";
-import { clusterClaims, buildClaim, relationInput, toEdge, type ClaimRelation } from "./claimgraph.ts";
+import {
+	clusterClaims,
+	claimClusterCandidates,
+	coalesceClaimClusters,
+	clusterRelationInput,
+	buildClaim,
+	relationInput,
+	toEdge,
+	type ClaimRelation,
+} from "./claimgraph.ts";
 import { assessSourceQuality, compositeQuality, qualityLabel } from "./quality.ts";
 import { defaultRequiredEvidence, createBudget, isBudgetExhausted, guardAction, transitionState, isTaskComplete, selectVerificationTargets, MAX_ATTEMPTS_PER_TASK } from "./controller.ts";
 import { buildCoverageMatrix } from "./coverage.ts";
@@ -540,11 +549,44 @@ export async function runResearch(
 		checkAbort();
 		progress("Building claim graph…");
 		const allEvidence = await store.loadEvidence();
-		const clusters = clusterClaims(allEvidence);
+		const provisionalClusters = clusterClaims(allEvidence);
+		const normalizationPairs = claimClusterCandidates(provisionalClusters);
+		const normalizationOutcomes = await runParallel(
+			normalizationPairs,
+			async ([a, b]) => {
+				const rel = await llmJson<{ relation: ClaimRelation | "unrelated"; reason?: string }>(
+					deps.handle, RELATION_TOOL, RELATION_SYSTEM,
+					relationPrompt(clusterRelationInput(provisionalClusters[a], provisionalClusters[b])),
+					{ signal: deps.signal, temperature: 0 },
+				);
+				return { pair: [a, b] as [number, number], ...rel };
+			},
+			3,
+			deps.signal,
+		);
+		const normalizationRelations = successes(normalizationOutcomes);
+		const clusters = coalesceClaimClusters(
+			provisionalClusters,
+			normalizationRelations.filter((result) => result.relation === "duplicate").map((result) => result.pair),
+		);
 		const claims: Claim[] = clusters.map((cluster, i) => buildClaim(`c${i + 1}`, cluster, sources));
 		await store.saveClaims(claims);
 
-		const pairs = prioritizePairs(claims).slice(0, MAX_RELATION_CHECKS);
+		const claimByEvidence = new Map<string, Claim>();
+		for (const claim of claims) for (const evidenceId of claim.evidence_ids) claimByEvidence.set(evidenceId, claim);
+		const checkedPairs = new Set<string>();
+		const normalizationEdges: ClaimEdge[] = [];
+		for (const result of normalizationRelations) {
+			const a = claimByEvidence.get(provisionalClusters[result.pair[0]][0]?.id);
+			const b = claimByEvidence.get(provisionalClusters[result.pair[1]][0]?.id);
+			if (!a || !b || a.id === b.id) continue;
+			checkedPairs.add(claimPairKey(a.id, b.id));
+			if (result.relation !== "unrelated") normalizationEdges.push({ ...toEdge(a.id, b.id, result.relation), reason: result.reason });
+		}
+
+		const pairs = prioritizePairs(claims)
+			.filter(([a, b]) => !checkedPairs.has(claimPairKey(a.id, b.id)))
+			.slice(0, MAX_RELATION_CHECKS);
 		const edgeOutcomes = await runParallel(
 			pairs,
 			async ([a, b]) => {
@@ -557,7 +599,11 @@ export async function runResearch(
 			3,
 			deps.signal,
 		);
-		const edges: ClaimEdge[] = successes(edgeOutcomes).filter((e): e is NonNullable<typeof e> => e !== null);
+		const edgeByRelation = new Map<string, ClaimEdge>();
+		for (const edge of [...normalizationEdges, ...successes(edgeOutcomes).filter((e): e is NonNullable<typeof e> => e !== null)]) {
+			edgeByRelation.set(`${claimPairKey(edge.from, edge.to)}:${edge.relation}`, edge);
+		}
+		const edges = [...edgeByRelation.values()];
 		await store.saveEdges(edges);
 		const contradictions = edges.filter((e) => e.relation === "contradicts");
 		if (contradictions.length > 0) await store.log("contradictions", { count: contradictions.length, edges: contradictions });
@@ -961,6 +1007,7 @@ async function sourcePipeline(
 		task_id: task.id,
 		source_id: source.id,
 		claim: e.claim,
+		proposition_key: e.proposition_key,
 		values: e.values,
 		conditions: e.conditions,
 		confidence: clamp01(e.confidence),
@@ -992,6 +1039,10 @@ function readyTasks(tasks: Task[]): Task[] {
 	return tasks
 		.filter((t) => t.status === "open" && (t.depends_on ?? []).every((d) => doneIds.has(d)))
 		.sort((a, b) => b.priority - a.priority || a.depth - b.depth);
+}
+
+function claimPairKey(a: string, b: string): string {
+	return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
 /** Relation-check pairs: shared sources and high confidence first. */
