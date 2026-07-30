@@ -2,7 +2,7 @@
 //
 // Tool: dr_research (spec → decompose → search → ingest → extract → claim graph
 // → contradiction → confidence → synthesize → audit). Long-running, interruptible,
-// resumable. Commands: /research (list/inspect runs), /research-config (backends).
+// resumable. Commands: /research (menu/list/inspect/configure backends).
 //
 // All external content is trust-tagged (injection heuristics + secret redaction)
 // before the model sees it. State persists under .pi/research/<runId>/.
@@ -11,7 +11,7 @@ import { Type } from "typebox";
 import { join } from "node:path";
 import { runResearch } from "../src/orchestrator.ts";
 import { RunStore, PROFILES, type ResearchConfig } from "../src/store.ts";
-import { getConfig, saveConfig, backendStatus, type DrConfig } from "../src/config.ts";
+import { getConfig, saveConfig, backendStatus, scrapegraphKey, hasSearchKey, resolveEnabledSearchBackends, resolveEnabledScrapeBackends, type DrConfig, type SearchBackendId, type ScrapeBackendId } from "../src/config.ts";
 import type { ModelHandle } from "../src/llm.ts";
 
 export default function (pi: ExtensionAPI) {
@@ -49,7 +49,7 @@ export default function (pi: ExtensionAPI) {
 		name: "dr_research",
 		label: "Deep Research",
 		description:
-			"Run a deep-research investigation with claim graph, contradiction detection, confidence estimation, citation audits, and prompt-injection defense. Returns a cited markdown report plus audit results. Long-running; interruptible (Esc), resumable. Backends configurable via /research-config (search: ddg/tavily/exa/scrapegraph, scrape: native/scrapegraph).",
+			"Run a deep-research investigation with claim graph, contradiction detection, confidence estimation, citation audits, and prompt-injection defense. Returns a cited markdown report plus audit results. Long-running; interruptible (Esc), resumable. Configure backends via /research menu.",
 		promptSnippet: "Run a deep-research investigation on a topic",
 		parameters: Type.Object({
 			topic: Type.String({ description: "The research question to investigate in depth." }),
@@ -176,78 +176,164 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	// ── /research — list or inspect runs ─────────────────────────────────
-	pi.registerCommand("research", {
-		description: "List deep-research runs or inspect one: /research [runId]",
-		handler: async (args, ctx) => {
-			const runs = await RunStore.list(ctx.cwd);
-			const target = args.trim();
-			if (!target) {
-				if (runs.length === 0) {
-					ctx.ui.notify("No research runs in this project yet.", "info");
-					return;
-				}
-				const metas = await Promise.all(runs.map(async (id) => new RunStore(ctx.cwd, id).loadMeta()));
-				const lines = metas
-					.filter((m): m is NonNullable<typeof m> => !!m)
-					.map(
-						(m) =>
-							`${m.status === "completed" ? "✓" : m.status === "interrupted" ? "⏸" : "●"} ${m.id}  —  ${m.topic}  (${m.stats.sources_ingested} src / ${m.stats.evidence_extracted} ev)`,
-					);
-				ctx.ui.notify(`Research runs:\n${lines.join("\n")}`, "info");
-				return;
-			}
-			const store = new RunStore(ctx.cwd, target);
-			const meta = await store.loadMeta();
-			if (!meta) {
-				ctx.ui.notify(`No run '${target}' found.`, "warning");
-				return;
-			}
-			const claims = await store.loadClaims();
-			const edges = await store.loadEdges();
-			ctx.ui.notify(
-				`${meta.id}\ntopic: ${meta.topic}\nstatus: ${meta.status}\nsources: ${meta.stats.sources_ingested} · evidence: ${meta.stats.evidence_extracted} · claims: ${claims.length} · edges: ${edges.length}\nreport: ${store.reportFile()}`,
-				"info",
-			);
-		},
-	});
 
-	// ── /research-config — backend selection ─────────────────────────────
-	pi.registerCommand("research-config", {
-		description:
-			"Configure deep-research backends. Usage: /research-config [search ddg|tavily|exa|scrapegraph] [scrape native|scrapegraph] [paid on|off] [key exa|tavily|scrapegraph <key>]",
+
+
+	// ── /research — navigable menu, list, or inspect ───────────────────
+	pi.registerCommand("research", {
+		description: "Configure backends, list runs, or inspect one. No args = menu.",
 		handler: async (args, ctx) => {
-			const parts = args.trim().split(/\s+/).filter(Boolean);
-			if (parts.length === 0) {
-				const cfg = await getConfig();
-				ctx.ui.notify(`Current config:\n${JSON.stringify(cfg, null, 2)}\n\nEffective: ${await backendStatus()}`, "info");
+			const target = args.trim();
+
+			// /research <runId> → inspect
+			if (target) {
+				const store = new RunStore(ctx.cwd, target);
+				const meta = await store.loadMeta();
+				if (!meta) { ctx.ui.notify(`No run '${target}' found.`, "warning"); return; }
+				const claims = await store.loadClaims();
+				const edges = await store.loadEdges();
+				ctx.ui.notify(
+					`${meta.id}\ntopic: ${meta.topic}\nstatus: ${meta.status}\nsources: ${meta.stats.sources_ingested} · evidence: ${meta.stats.evidence_extracted} · claims: ${claims.length} · edges: ${edges.length}\nreport: ${store.reportFile()}`,
+					"info",
+				);
 				return;
 			}
-			const updates: DrConfig = {};
-			for (let i = 0; i < parts.length; i++) {
-				const [field, value] = [parts[i], parts[i + 1]];
-				if (field === "search" && ["ddg", "tavily", "exa", "scrapegraph"].includes(value)) {
-					updates.search = value as DrConfig["search"];
-					i++;
-				} else if (field === "scrape" && ["native", "scrapegraph"].includes(value)) {
-					updates.scrape = value as DrConfig["scrape"];
-					i++;
-				} else if (field === "paid") {
-					updates.allowPaidBackends = value !== "off";
-					i++;
-				} else if (field === "key" && ["exa", "tavily", "scrapegraph"].includes(value) && parts[i + 2]) {
-					if (value === "exa") updates.exaApiKey = parts[i + 2];
-					if (value === "tavily") updates.tavilyApiKey = parts[i + 2];
-					if (value === "scrapegraph") updates.scrapegraphApiKey = parts[i + 2];
-					i += 2;
+
+			// /research (no args) → main menu loop
+			let inMenu = true;
+			while (inMenu) {
+				const cfg = await getConfig();
+				const searchBackends = resolveEnabledSearchBackends(cfg);
+				const scrapeBackends = resolveEnabledScrapeBackends(cfg);
+
+				// Build status line
+				const searchLabels: Record<string, string> = { exa: "Exa", ddg: "DDG", tavily: "Tavily", scrapegraph: "ScrapeGraph" };
+				const scrapeLabels: Record<string, string> = { native: "Native", scrapegraph: "ScrapeGraph" };
+				const searchStatus = (["exa","ddg","tavily","scrapegraph"] as const).map((id: string) => {
+					const enabled = searchBackends.includes(id as SearchBackendId);
+					const hasKey = id === "ddg" || hasSearchKey(cfg, id as SearchBackendId);
+					return `${searchLabels[id]} ${enabled ? "✓" : "✗"}${!hasKey && id !== "ddg" ? " (no key)" : ""}`;
+				}).join("  ");
+				const scrapeStatus = (["native","scrapegraph"] as const).map(id => {
+					const enabled = scrapeBackends.includes(id);
+					return `${scrapeLabels[id]} ${enabled ? "✓" : "✗"}`;
+				}).join("  ");
+
+				const mainChoice = await ctx.ui.select(
+					`Deep Research — search:[${searchStatus}]  scrape:[${scrapeStatus}]`,
+					["Search backends…", "Scrape backends…", "API keys…", "List runs", "Done"]
+				);
+				if (!mainChoice || mainChoice === "Done") { inMenu = false; continue; }
+
+				if (mainChoice === "Search backends…") {
+					// Submenu: toggle each search backend
+					let inSearch = true;
+					while (inSearch) {
+						const c = await getConfig();
+						const enabled = resolveEnabledSearchBackends(c);
+						const opts = (["exa","ddg","tavily","scrapegraph"] as const).map(id => {
+							const on = enabled.includes(id);
+							const key = id === "ddg" ? "free" : hasSearchKey(c, id) ? "key ✓" : "no key";
+							return `${on ? "✓" : "✗"} ${searchLabels[id]} (${key})`;
+						});
+						opts.push("Back");
+						const sel = await ctx.ui.select("Search backends (toggle)", opts);
+						if (!sel || sel === "Back") { inSearch = false; continue; }
+						// Find which backend was selected
+						const idx = opts.indexOf(sel!);
+						const allIds: SearchBackendId[] = ["exa","ddg","tavily","scrapegraph"];
+						if (idx >= 0 && idx < 4) {
+							const id = allIds[idx];
+							const currentlyEnabled = resolveEnabledSearchBackends(await getConfig());
+							const hasKey = (id as string) === "ddg" || hasSearchKey(await getConfig(), id);
+							// If trying to enable but no key → prompt for key
+							if (!currentlyEnabled.includes(id) && !hasKey) {
+								if ((id as string) !== "ddg") {
+									const newKey = await ctx.ui.input(`Enter ${searchLabels[id]} API key`, "");
+									if (newKey) {
+										const keyField = id === "exa" ? "exaApiKey" : id === "tavily" ? "tavilyApiKey" : "scrapegraphApiKey";
+										await saveConfig({ [keyField]: newKey } as DrConfig);
+									} else { continue; } // cancelled, don't enable
+								}
+							}
+							// Toggle
+							const newEnabled = currentlyEnabled.includes(id)
+								? currentlyEnabled.filter(x => x !== id)
+								: [...currentlyEnabled, id];
+							// Never allow empty — always keep at least DDG
+							if (newEnabled.length === 0) { ctx.ui.notify("At least one search backend required.", "warning"); continue; }
+							await saveConfig({ enabledSearchBackends: newEnabled });
+						}
+					}
+				}
+
+				if (mainChoice === "Scrape backends…") {
+					let inScrape = true;
+					while (inScrape) {
+						const c = await getConfig();
+						const enabled = resolveEnabledScrapeBackends(c);
+						const opts = (["native","scrapegraph"] as const).map(id => {
+							const on = enabled.includes(id);
+							const key = id === "native" ? "free" : scrapegraphKey(c) ? "key ✓" : "no key";
+							return `${on ? "✓" : "✗"} ${scrapeLabels[id]} (${key})`;
+						});
+						opts.push("Back");
+						const sel = await ctx.ui.select("Scrape backends (toggle)", opts);
+						if (!sel || sel === "Back") { inScrape = false; continue; }
+						const idx = opts.indexOf(sel!);
+						const allIds: ScrapeBackendId[] = ["native","scrapegraph"];
+						if (idx >= 0 && idx < 2) {
+							const id = allIds[idx];
+							const currentlyEnabled = resolveEnabledScrapeBackends(await getConfig());
+							if (!currentlyEnabled.includes(id) && id === "scrapegraph" && !scrapegraphKey(await getConfig())) {
+								const newKey = await ctx.ui.input("Enter ScrapeGraph API key", "");
+								if (newKey) { await saveConfig({ scrapegraphApiKey: newKey } as DrConfig); }
+								else { continue; }
+							}
+							const newEnabled = currentlyEnabled.includes(id)
+								? currentlyEnabled.filter(x => x !== id)
+								: [...currentlyEnabled, id];
+							if (newEnabled.length === 0) { ctx.ui.notify("At least one scrape backend required.", "warning"); continue; }
+							await saveConfig({ enabledScrapeBackends: newEnabled });
+						}
+					}
+				}
+
+				if (mainChoice === "API keys…") {
+					let inKeys = true;
+					while (inKeys) {
+						const c = await getConfig();
+						const opts = [
+							`Exa: ${c.exaApiKey ? c.exaApiKey.slice(0, 8) + "…" : "(not set)"}`,
+							`ScrapeGraph: ${c.scrapegraphApiKey ? c.scrapegraphApiKey.slice(0, 8) + "…" : "(not set)"}`,
+							`Tavily: ${c.tavilyApiKey ? c.tavilyApiKey.slice(0, 8) + "…" : "(not set)"}`,
+							"Back",
+						];
+						const sel = await ctx.ui.select("API keys", opts);
+						if (!sel || sel === "Back") { inKeys = false; continue; }
+						if (sel.startsWith("Exa")) {
+							const val = await ctx.ui.input("Exa API key", "Enter key or empty to clear");
+							await saveConfig({ exaApiKey: val || "" } as DrConfig);
+						} else if (sel.startsWith("ScrapeGraph")) {
+							const val = await ctx.ui.input("ScrapeGraph API key", "Enter key or empty to clear");
+							await saveConfig({ scrapegraphApiKey: val || "" } as DrConfig);
+						} else if (sel.startsWith("Tavily")) {
+							const val = await ctx.ui.input("Tavily API key", "Enter key or empty to clear");
+							await saveConfig({ tavilyApiKey: val || "" } as DrConfig);
+						}
+					}
+				}
+
+				if (mainChoice === "List runs") {
+					const runs = await RunStore.list(ctx.cwd);
+					if (runs.length === 0) { ctx.ui.notify("No research runs in this project yet.", "info"); continue; }
+					const metas = await Promise.all(runs.map(async (id) => new RunStore(ctx.cwd, id).loadMeta()));
+					const lines = metas.filter((m): m is NonNullable<typeof m> => !!m).map(
+						(m) => `${m.status === "completed" ? "✓" : m.status === "interrupted" ? "⏸" : "●"} ${m.id}  —  ${m.topic}  (${m.stats.sources_ingested} src / ${m.stats.evidence_extracted} ev)`,
+					);
+					ctx.ui.notify(`Research runs:\n${lines.join("\n")}`, "info");
 				}
 			}
-			const next = await saveConfig(updates);
-			const masked = { ...next };
-			for (const k of ["exaApiKey", "tavilyApiKey", "scrapegraphApiKey"] as const) {
-				if (masked[k]) masked[k] = masked[k]!.slice(0, 8) + "…";
-			}
-			ctx.ui.notify(`Saved. Config:\n${JSON.stringify(masked, null, 2)}\n\nEffective: ${await backendStatus()}`, "info");
 		},
 	});
 }

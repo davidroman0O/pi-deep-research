@@ -14,7 +14,7 @@ import { JSDOM } from "jsdom";
 import TurndownService from "turndown";
 import pdfParse from "pdf-parse";
 import { assessContent, redactSecrets, type TrustTag } from "./trust.ts";
-import { getConfig, resolveScrapeBackend, resolveKey, type ScrapeBackendId } from "./config.ts";
+import { getConfig, resolveEnabledScrapeBackends, resolveKey, type ScrapeBackendId } from "./config.ts";
 
 const UA =
 	"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36";
@@ -45,36 +45,42 @@ export interface IngestOptions {
 /** Fetch + parse a URL. Trust assessment is always applied. Throws on failure. */
 export async function ingestUrl(url: string, opts: IngestOptions = {}): Promise<Document> {
 	const cfg = await getConfig();
-	let backend = opts.backend ?? resolveScrapeBackend(cfg);
+	const enabledScrapers = resolveEnabledScrapeBackends(cfg);
 	const maxChars = opts.maxChars ?? 20_000;
 
-	// ScrapeGraph's markdown reader cannot process PDFs (502 content_process_failed).
-	// Route by content type: PDFs always go native (pdf-parse).
+	// ScrapeGraph's markdown reader cannot process PDFs.
 	const cleanUrl = sanitizeUrl(url);
-	if (looksLikePdf(cleanUrl)) backend = "native";
+	const isPdf = looksLikePdf(cleanUrl);
 
-	let doc: Document;
-	if (backend === "scrapegraph") {
-		const key = resolveKey(cfg, "scrapegraph");
-		if (!key) throw new Error("ScrapeGraph backend selected but no key configured");
+	// Try each enabled scraper in order until one succeeds
+	let lastError: Error | undefined;
+	for (const backend of enabledScrapers) {
+		// PDFs always go native
+		if (isPdf && backend === "scrapegraph") continue;
 		try {
-			doc = await ingestViaScrapeGraph(cleanUrl, key, opts);
+			if (backend === "scrapegraph") {
+				const key = resolveKey(cfg, "scrapegraph");
+				if (!key) continue;
+				return await ingestViaScrapeGraph(cleanUrl, key, opts);
+			} else {
+				return await ingestNative(cleanUrl, opts);
+			}
 		} catch (err) {
-			// Cross-backend retry: the two backends have disjoint failure modes
-			// (bot walls vs PDFs). A serious research tool tries both before
-			// declaring a source unreadable.
-			doc = await ingestNative(cleanUrl, opts);
+			lastError = err instanceof Error ? err : new Error(String(err));
+			continue; // try next backend
 		}
-	} else {
-		doc = await ingestNative(cleanUrl, opts);
 	}
+	throw lastError ?? new Error("No scrape backend available");
+}
 
+/** Post-process: trust layer + redaction. Called after any backend succeeds. */
+function finalizeDocument(doc: Document, maxChars: number): Document {
 	// trust layer — always
 	const tag = assessContent(doc.text);
 	const redacted = redactSecrets(doc.text);
-	doc = { ...doc, text: redacted.slice(0, maxChars), trust: tag, backend };
-	doc.chars = doc.text.length;
-	return doc;
+	const finalized = { ...doc, text: redacted.slice(0, maxChars), trust: tag };
+	finalized.chars = finalized.text.length;
+	return finalized;
 }
 
 /** Strip zero-width unicode that leaks into URLs from copy-paste / Exa results. */
