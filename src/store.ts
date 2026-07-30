@@ -56,6 +56,7 @@ export interface Evidence {
 	task_id: string;
 	source_id: string;
 	claim: string;
+	proposition_key?: string; // canonical, source-independent claim identity for corroboration matching
 	values?: Record<string, string | number>;
 	conditions?: string;
 	confidence: number; // 0..1

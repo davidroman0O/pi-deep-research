@@ -6,23 +6,44 @@
 
 import type { Evidence, Source, Claim, ClaimEdge } from "./store.ts";
 
-/** Group atomic evidence into canonical claims by subject + predicate similarity. */
+/** Group atomic evidence into canonical claims by proposition key, then semantic similarity. */
 export function clusterClaims(evidence: Evidence[]): Evidence[][] {
 	const clusters: Evidence[][] = [];
 	const used = new Set<string>();
-	// naive O(n²) greedy clustering on token overlap (cheap, no embeddings needed)
 	const tokenSets = evidence.map((e) => tokenSet(e.claim));
+
+	// First pass: cluster by exact proposition_key match (semantic canonicalization)
+	const keyGroups = new Map<string, Evidence[]>();
+	for (const e of evidence) {
+		if (e.proposition_key) {
+			const key = normalizePropositionKey(e.proposition_key);
+			if (!keyGroups.has(key)) keyGroups.set(key, []);
+			keyGroups.get(key)!.push(e);
+		}
+	}
+
 	for (let i = 0; i < evidence.length; i++) {
 		if (used.has(evidence[i].id)) continue;
 		const cluster = [evidence[i]];
 		used.add(evidence[i].id);
+
+		// If this evidence has a proposition_key, merge all evidence with the same key
+		const pk = evidence[i].proposition_key;
+		if (pk) {
+			const key = normalizePropositionKey(pk);
+			for (const other of (keyGroups.get(key) ?? [])) {
+				if (other.id !== evidence[i].id && !used.has(other.id)) {
+					cluster.push(other);
+					used.add(other.id);
+				}
+			}
+		}
+
+		// Fallback: lexical similarity for evidence without proposition_key matches
 		for (let j = i + 1; j < evidence.length; j++) {
 			if (used.has(evidence[j].id)) continue;
 			const sim = jaccard(tokenSets[i], tokenSets[j]);
 			const sameMetric = sharedValueKey(evidence[i], evidence[j]);
-			// §9.2 entity+value corroboration: merge if different sources share
-			// a significant entity AND a numeric value (within tolerance), even if
-			// text similarity is low. This is the canonicalization the transcript demands.
 			const sameEntityValue = sharesEntityAndValue(evidence[i].claim, evidence[j].claim);
 			if (sim >= 0.25 || (sim >= 0.15 && sameMetric) || sameEntityValue) {
 				cluster.push(evidence[j]);
@@ -32,6 +53,14 @@ export function clusterClaims(evidence: Evidence[]): Evidence[][] {
 		clusters.push(cluster);
 	}
 	return clusters;
+}
+
+function normalizePropositionKey(key: string): string {
+	return key
+		.toLowerCase()
+		.split("|")
+		.map((slot) => slot.trim().replace(/\s+/g, " ").replace(/(\d),(?=\d)/g, "$1"))
+		.join("|");
 }
 
 export type ClaimRelation = "supports" | "contradicts" | "qualifies" | "duplicate" | "derived" | "unrelated";

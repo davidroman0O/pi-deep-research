@@ -28,7 +28,7 @@ import type { TestConfig } from "../lib/types.ts";
 
 const config: TestConfig = {
 	topic: process.env.TOPIC ?? "What is the current capital cost per kW of small modular reactors?",
-	profile: "standard",
+	profile: "benchmark",
 	model: process.env.MODEL,
 };
 

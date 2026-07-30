@@ -37,9 +37,9 @@ import { getSearchProvider, rankResults, type SearchProvider, type SearchResult 
 import { ingestUrl, type Document } from "./ingest.ts";
 import { wrapUntrusted } from "./trust.ts";
 import { canonicalUrl, contentHash, simhash, checkDuplicate, novelty, detectSourceFamily } from "./novel.ts";
-import { clusterClaims, buildClaim, relationInput, toEdge, sharesEntityAndValue, type ClaimRelation } from "./claimgraph.ts";
+import { clusterClaims, buildClaim, relationInput, toEdge, type ClaimRelation } from "./claimgraph.ts";
 import { assessSourceQuality, compositeQuality, qualityLabel } from "./quality.ts";
-import { defaultRequiredEvidence, createBudget, isBudgetExhausted, guardAction, transitionState, isTaskComplete, MAX_ATTEMPTS_PER_TASK } from "./controller.ts";
+import { defaultRequiredEvidence, createBudget, isBudgetExhausted, guardAction, transitionState, isTaskComplete, selectVerificationTargets, MAX_ATTEMPTS_PER_TASK } from "./controller.ts";
 import { buildCoverageMatrix } from "./coverage.ts";
 import { buildSnapshot, chooseAction, type MemorySnapshot } from "./policy.ts";
 import { chunkDocument, selectPassages, assembleContext } from "./passage.ts";
@@ -87,12 +87,24 @@ export interface ResearchResult {
 interface ExtractToolArgs {
 	evidence: Array<{
 		claim: string;
+		proposition_key?: string;
+		target_relation?: "supports" | "duplicate" | "contradicts" | "qualifies" | "unrelated";
 		values?: Record<string, string | number>;
 		conditions?: string;
 		confidence: number;
 		quote?: string;
 	}>;
 	injection_detected?: string[];
+}
+
+export function prepareVerificationEvidence(
+	evidence: ExtractToolArgs["evidence"],
+	targetPropositionKey: string,
+): ExtractToolArgs["evidence"] {
+	// ponytail: Evidence has no stance field; persist non-support when typed target edges exist.
+	return evidence
+		.filter((e) => e.target_relation === "supports" || e.target_relation === "duplicate")
+		.map((e) => ({ ...e, proposition_key: targetPropositionKey }));
 }
 
 interface SourceOutcome {
@@ -113,6 +125,10 @@ const TASK_CONCURRENCY = 2; // tasks researched in parallel (§26 bounded fan-ou
 const SOURCE_CONCURRENCY = 3; // sources ingested/extracted in parallel per task
 const EXTRACT_CHAR_BUDGET = 14_000; // §13.2 budgeted context assembly
 const VERIFY_SAFETY_NET_CLAIMS = 3; // §15 — corroborate up to N single-sourced claims/task (was 1)
+
+export function sourceLimitForAction(maxSources: number, action: string): number {
+	return action === "search" ? Math.max(1, maxSources - VERIFY_SAFETY_NET_CLAIMS) : maxSources;
+}
 
 export async function runResearch(
 	topic: string,
@@ -275,10 +291,11 @@ export async function runResearch(
 					const ranked = rankResults(allResults)
 						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
 						.slice(0, config.breadth);
+					const sourceLimit = sourceLimitForAction(config.max_sources, guarded.type);
 
 					for (const res of ranked) {
 						checkAbort();
-						if (sources.length >= config.max_sources) break;
+						if (sources.length >= sourceLimit) break;
 
 						const known = sources.map((s) => ({ url: s.url, hash: s.hash, fingerprint: BigInt("0x" + (s.fingerprint ?? "0")) }));
 						let doc;
@@ -323,7 +340,7 @@ export async function runResearch(
 
 						for (const e of evidenceList) {
 							const ev: Evidence = { id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: sourceId,
-								claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote };
+								claim: e.claim, proposition_key: e.proposition_key, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote };
 							await store.appendEvidence(ev);
 							meta.stats.evidence_extracted++;
 						}
@@ -349,48 +366,45 @@ export async function runResearch(
 
 			// ── verify safety net (§15 — ensures corroboration even if model didn't choose verify) ──
 			const postTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
-			const sourceFamilyMap = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
-			const singleSourced = postTaskEvidence.filter((e) => {
-				if (e.confidence < 0.6) return false;
-				const sameClaimFamilies = new Set(
-					postTaskEvidence
-						.filter((e2) => sharesEntityAndValue(e.claim, e2.claim) || e2.claim.includes(e.claim.slice(0, 40)))
-						.map((e2) => sourceFamilyMap.get(e2.source_id))
-						.filter(Boolean) as string[],
-				);
-				return sameClaimFamilies.size < 2;
-			});
+			const singleSourced = selectVerificationTargets(postTaskEvidence, sources);
 			// ponytail: no priority gate — the source-cap guard below already bounds
 			// cost, and high-priority tasks run first so they can't be starved.
 			// Gating on priority left low-priority tasks' high-confidence claims
 			// permanently single-sourced, capping corroboratedFraction.
 			if (singleSourced.length > 0 && sources.length < config.max_sources - 2) {
 				checkAbort();
-				const claimsToVerify = [...singleSourced]
-					.sort((a, b) => b.confidence - a.confidence)
-					.slice(0, VERIFY_SAFETY_NET_CLAIMS);
+				const claimsToVerify = singleSourced.slice(0, VERIFY_SAFETY_NET_CLAIMS);
 				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced — corroborating ${claimsToVerify.length}`);
 				let verifyClaimsTried = 0;
 				for (const claimToVerify of claimsToVerify) {
 					if (sources.length >= config.max_sources - 2) break;
+					const targetPropositionKey = claimToVerify.proposition_key;
+					if (!targetPropositionKey) continue;
 					// ponytail: skip if an earlier verify this pass already lifted this claim to ≥2 families
 					// — cheap family recount avoids a wasted search+ingest round.
 					const famNow = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
+					const currentTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
+					const targetCluster = clusterClaims(currentTaskEvidence)
+						.find((cluster) => cluster.some((e) => e.id === claimToVerify.id));
 					const targetFamilies = new Set(
-						(await store.loadEvidence())
-							.filter((e2) => e2.task_id === task.id && (sharesEntityAndValue(claimToVerify.claim, e2.claim) || e2.claim.includes(claimToVerify.claim.slice(0, 40))))
-							.map((e2) => famNow.get(e2.source_id))
+						(targetCluster ?? [claimToVerify])
+							.map((e) => famNow.get(e.source_id))
 							.filter(Boolean) as string[],
 					);
 					if (targetFamilies.size >= 2) continue;
 					verifyClaimsTried++;
+					const verifySubject = claimToVerify.proposition_key
+						?.split("|")
+						.map((slot) => slot.trim())
+						.filter((slot) => slot !== "none")
+						.join(" ") || claimToVerify.claim;
 					const verifyQueries = [
-						`${claimToVerify.claim.slice(0, 80)} independent analysis OR report OR study`,
+						`${verifySubject} independent analysis OR report OR study`,
 						`${task.question.slice(0, 60)} corroboration OR comparison OR alternative estimate`,
 					];
 					const verifyResults: SearchResult[] = [];
 					for (const vq of verifyQueries) {
-						try { verifyResults.push(...(await search.search(vq, deps.signal, 3))); } catch {}
+						try { verifyResults.push(...(await search.search(vq, deps.signal, 8))); } catch {}
 					}
 					const verifyRanked = rankResults(verifyResults)
 						.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)) &&
@@ -408,14 +422,17 @@ export async function runResearch(
 						const verifyTask: Task = {
 							...task,
 							question: `Find independent evidence that supports, contradicts, or qualifies this exact claim: ${claimToVerify.claim}`,
-							completion_test: "Extract only evidence about that exact claim; return an empty evidence array for adjacent facts.",
+							completion_test: `Set target_relation for every item. supports/duplicate require an exact match to ${targetPropositionKey}; use contradicts, qualifies, or unrelated otherwise.`,
 						};
 						const vpassages = chunkDocument(vdoc.text);
 						const vselected = selectPassages(verifyTask.question, vpassages, EXTRACT_CHAR_BUDGET);
 						const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
 						const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
 							extractPrompt(verifyTask, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
-						const vlist = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
+						const vlist = prepareVerificationEvidence(
+							Array.isArray(vextracted?.evidence) ? vextracted.evidence : [],
+							targetPropositionKey,
+						);
 						if (vlist.length === 0) continue;
 						const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords });
 						const vcomposite = compositeQuality(vfeatures);
@@ -427,7 +444,7 @@ export async function runResearch(
 						await store.saveRawSource(vsid, vdoc.text);
 						for (const e of vlist) {
 							await store.appendEvidence({ id: `e${meta.stats.evidence_extracted + 1}`, task_id: task.id, source_id: vsid,
-								claim: e.claim, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
+								claim: e.claim, proposition_key: e.proposition_key, values: e.values, conditions: e.conditions, confidence: clamp01(e.confidence), quote: e.quote });
 							meta.stats.evidence_extracted++;
 						}
 						// source memo for verify source

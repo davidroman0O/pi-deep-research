@@ -141,6 +141,23 @@ function checkCorroboration(task: Task, evidence: Evidence[], sources: Source[])
 	return corroborated > clusters.length / 2;
 }
 
+/** Pick one high-confidence representative per claim cluster that still lacks independent support. */
+export function selectVerificationTargets(evidence: Evidence[], sources: Source[]): Evidence[] {
+	const familyBySource = new Map(
+		sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]),
+	);
+	return clusterClaims(evidence)
+		.filter((cluster) => {
+			if (!cluster.some((e) => e.confidence >= 0.6)) return false;
+			const families = new Set(
+				cluster.map((e) => familyBySource.get(e.source_id)).filter(Boolean) as string[],
+			);
+			return families.size < 2;
+		})
+		.map((cluster) => cluster.reduce((best, e) => e.confidence > best.confidence ? e : best))
+		.sort((a, b) => b.confidence - a.confidence);
+}
+
 // ── action safety guards (§2.6) ──────────────────────────────────────────
 
 export interface Budget {

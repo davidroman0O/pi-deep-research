@@ -92,7 +92,9 @@ export function proxyScores(m: RunMetrics): Record<string, number> {
 		// contradiction_handling: acknowledged = good
 		contradiction_handling: m.contradictionsAcknowledged ? 4 : m.contradictionsDetected > 0 ? 2 : 3,
 
-		// factual_accuracy: proxy via corroboration fraction
-		factual_accuracy: Math.max(1, Math.min(5, Math.round(m.corroboratedFraction * 5))),
+		// factual_accuracy: proxy via corroboration fraction — use continuous scale, not coarse rounding
+		// Below 20% corroboration, the old round() mapped everything to 1, making improvements invisible.
+		// Now: linear scale with sub-integer precision so 4%→10% is detectable as 1.0→1.5.
+		factual_accuracy: Math.max(1, Math.min(5, 1 + m.corroboratedFraction * 4)),
 	};
 }
