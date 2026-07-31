@@ -48,7 +48,7 @@ async function main() {
 	console.log(`  metrics: ${formatMetrics(result.metrics)}`);
 
 	// ── proxy scores from deterministic metrics ────────────────────────
-	const scores = proxyScores(result.metrics);
+	const scores = proxyScores(result.metrics, result.report);
 	const composite = compositeFromScores(scores, RUBRIC_WEIGHTS);
 
 	// ── hard gates (§9.2) ──────────────────────────────────────────────
@@ -74,20 +74,23 @@ async function main() {
 	// All 9 criteria: 5 have deterministic proxies, 4 are juror-only (emit 0)
 	console.log(`\nMETRIC quality_score=${composite.toFixed(4)}`);
 	console.log(`METRIC passed=${passed ? 1 : 0}`);
-	// Proxy-scoreable criteria
+	// Proxy-scoreable criteria (all 9 now have deterministic proxies)
 	for (const [criterion, score] of Object.entries(scores)) {
 		console.log(`METRIC ${criterion}=${score}`);
 	}
-	// Juror-only criteria — emit 0 so autoresearch sees all 9, but can't optimize them here
-	console.log(`METRIC analytical_depth=0`);
-	console.log(`METRIC timeliness=0`);
-	console.log(`METRIC structure_actionability=0`);
-	console.log(`METRIC conciseness=0`);
 	// Raw deterministic metrics
 	console.log(`METRIC sources=${result.metrics.sources}`);
 	console.log(`METRIC corroboration=${result.metrics.corroboratedFraction.toFixed(4)}`);
 	console.log(`METRIC citation_pass_rate=${result.metrics.citationPassRate.toFixed(4)}`);
 	console.log(`METRIC coverage=${result.metrics.dimensionsTotal > 0 ? (result.metrics.dimensionsCovered / result.metrics.dimensionsTotal).toFixed(4) : "0"}`);
+
+	// Subsystem metrics (DRH recommendation: give optimizer deterministic signals)
+	console.log(`METRIC claims=${result.metrics.claims}`);
+	console.log(`METRIC evidence=${result.metrics.evidenceRecords}`);
+	console.log(`METRIC independent_publishers=${result.metrics.independentPublishers}`);
+	console.log(`METRIC publisher_concentration=${result.metrics.publisherConcentration.toFixed(4)}`);
+	console.log(`METRIC citation_ready_claims=${result.metrics.claimsCitationReady}`);
+	console.log(`METRIC contradictions=${result.metrics.contradictionsDetected}`);
 
 	if (!passed) {
 		console.log(`\n⚠ HARD-GATE VIOLATIONS:`);

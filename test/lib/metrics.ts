@@ -75,8 +75,13 @@ export function formatMetrics(m: RunMetrics): string {
 // Map deterministic metrics to approximate rubric-style scores (1-5).
 // Used by the autoresearch fast loop as a cheap proxy for the LLM juror.
 // These are NOT the real juror scores — they're fast heuristics.
+//
+// DRH recommendation: add deterministic proxies for the 4 juror-only criteria
+// (analytical_depth, timeliness, structure_actionability, conciseness) so the
+// optimizer has levers beyond the 5 original proxies. Max composite was 4.0
+// with zeros; now it can reach 5.0.
  */
-export function proxyScores(m: RunMetrics): Record<string, number> {
+export function proxyScores(m: RunMetrics, report?: string): Record<string, number> {
 	return {
 		// citation_integrity: map pass rate to 1-5
 		citation_integrity: Math.max(1, Math.min(5, Math.round(m.citationPassRate * 5))),
@@ -92,9 +97,37 @@ export function proxyScores(m: RunMetrics): Record<string, number> {
 		// contradiction_handling: acknowledged = good
 		contradiction_handling: m.contradictionsAcknowledged ? 4 : m.contradictionsDetected > 0 ? 2 : 3,
 
-		// factual_accuracy: proxy via corroboration fraction — use continuous scale, not coarse rounding
-		// Below 20% corroboration, the old round() mapped everything to 1, making improvements invisible.
-		// Now: linear scale with sub-integer precision so 4%→10% is detectable as 1.0→1.5.
+		// factual_accuracy: proxy via corroboration fraction — continuous scale
 		factual_accuracy: Math.max(1, Math.min(5, 1 + m.corroboratedFraction * 4)),
+
+		// ── DRH-added deterministic proxies (were always 0) ─────────────
+
+		// analytical_depth: corroborated claims on log scale (deeper = more verified claims)
+		analytical_depth: Math.max(1, Math.min(5, 1 + Math.log2(Math.max(1, m.corroboratedClaims)) * 0.5)),
+
+		// timeliness: fraction of recent year references (2024+) in report text
+		timeliness: (() => {
+			if (!report) return 3;
+			const years = report.match(/20\d{2}/g) ?? [];
+			if (years.length === 0) return 3;
+			const recent = years.filter(y => parseInt(y) >= 2024).length;
+			return Math.max(1, Math.min(5, 1 + (recent / years.length) * 4));
+		})(),
+
+		// structure_actionability: section count + recommendation keywords
+		structure_actionability: (() => {
+			if (!report) return 3;
+			const headings = (report.match(/^#{1,3}\s/gm) ?? []).length;
+			const hasRec = /recommend|should|action item|next step|implication|takeaway/i.test(report);
+			return Math.max(1, Math.min(5, 1 + headings * 0.15 + (hasRec ? 1.5 : 0)));
+		})(),
+
+		// conciseness: words per claim (lower = more concise). ~15 words/claim → score 3.5
+		conciseness: (() => {
+			if (!report || m.claims === 0) return 3;
+			const words = report.split(/\s+/).length;
+			const wpc = words / m.claims;
+			return Math.max(1, Math.min(5, 5 - wpc * 0.1));
+		})(),
 	};
 }

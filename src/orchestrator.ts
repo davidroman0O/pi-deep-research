@@ -693,14 +693,22 @@ export async function runResearch(
 			.join("\n");
 		const synthesesDigest = syntheses.map((s) => `### ${s.dimension} [${s.confidence}]\n${s.synthesis}`).join("\n");
 
-		const { sections: rawSections } = await llmJson<{ sections: Array<{ title: string; objective: string; claim_ids: string[] }> }>(
+		const { sections: rawSections } = await llmJson<{ sections: Array<{ title: string; objective: string; claim_ids: string[] | string }> }>(
 			deps.handle, OUTLINE_TOOL, OUTLINE_SYSTEM,
 			outlinePrompt(meta.spec, claimsDigest, synthesesDigest),
 			{ signal: deps.signal, temperature: 0.4 },
 		);
 		// The executive summary is generated separately after drafting — drop any
 		// outline section that tries to write one (otherwise it appears twice).
-		const sections = rawSections.filter((s) => !/executive\s+summary/i.test(s.title));
+		const sections = rawSections
+			.filter((s) => !/executive\s+summary/i.test(s.title))
+			.map((s) => ({
+				...s,
+				// Codex may return comma-separated ids despite the array schema.
+				claim_ids: Array.isArray(s.claim_ids)
+					? s.claim_ids
+					: s.claim_ids.split(/\s*,\s*/).filter((id) => /^C\d+$/i.test(id)),
+			}));
 		await store.saveOutline({ sections, dropped: rawSections.length - sections.length, created_at: new Date().toISOString() });
 
 		// Per-section drafting in parallel (bounded) — each section gets its own

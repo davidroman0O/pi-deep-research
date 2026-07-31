@@ -11,7 +11,7 @@ import type { Claim, ClaimEdge, Evidence, Source, Spec, Task } from "./store.ts"
 
 export interface CitationFailure {
 	sentence: string;
-	raw: string; // original report line — repair replacements match against this
+	raw: string; // original report sentence — repair replacements match against this
 	citation: string;
 	citationNum: number;
 	problem: string;
@@ -41,13 +41,17 @@ interface SentenceCitation {
 export function extractCitedSentences(report: string): SentenceCitation[] {
 	const body = report.split(/^## Sources/m)[0] ?? report;
 	const out: SentenceCitation[] = [];
+	const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
 	for (const line of body.split("\n")) {
 		// skip table rows and headings — they're structure, not prose sentences
 		if (/^\s*\|/.test(line) || /^#{1,4}\s/.test(line)) continue;
-		const clean = line.replace(/\*\*/g, "").trim();
-		if (clean.length < 30) continue;
-		for (const m of clean.matchAll(/\[(\d+)\]/g)) {
-			out.push({ sentence: clean, raw: line, citationNum: Number(m[1]) });
+		for (const { segment } of segmenter.segment(line)) {
+			const raw = segment.trim();
+			const sentence = raw.replace(/\*\*/g, "").trim();
+			if (sentence.length < 30) continue;
+			for (const m of sentence.matchAll(/\[(\d+)\]/g)) {
+				out.push({ sentence, raw, citationNum: Number(m[1]) });
+			}
 		}
 	}
 	return out;

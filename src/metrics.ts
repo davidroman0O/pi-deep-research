@@ -63,11 +63,34 @@ export function computeMetrics(
 			corroborated++;
 			continue;
 		}
+		// A model-classified supports edge is independent corroboration when
+		// its other endpoint comes from a different source family.
+		const graphSupported = edges.some((edge) => {
+			if (edge.relation !== "supports") return false;
+			const otherId = edge.from === c.id ? edge.to : edge.to === c.id ? edge.from : undefined;
+			const other = claims.find((candidate) => candidate.id === otherId);
+			if (!other) return false;
+			const otherFamilies = new Set(
+				evidence
+					.filter((e) => other.evidence_ids.includes(e.id))
+					.map((e) => sourceFamily.get(e.source_id))
+					.filter(Boolean) as string[],
+			);
+			return [...otherFamilies].some((family) => !families.has(family));
+		});
+		if (graphSupported) {
+			corroborated++;
+			continue;
+		}
 		// fallback: entity+value matching across ALL evidence (not just this claim's)
 		// if another claim from a different family shares entity + value → corroborated
 		const cEntities = extractEntities(c.text);
 		const cValues = extractValues(c.text);
-		if (cEntities.size > 0 && cValues.length > 0) {
+		// Keep explicit sub-100 values (percentages, $/MWh, small capacities)
+		// scoped by proposition subject/predicate + unit so years and unrelated metrics cannot collide.
+		const cScopedValues = extractScopedValues(c.text);
+		const cScopes = propositionScopes(claimEvidence);
+		if ((cEntities.size > 0 && cValues.length > 0) || (cScopes.length > 0 && cScopedValues.length > 0)) {
 			for (const other of claims) {
 				if (other.id === c.id) continue;
 				const otherEvidence = evidence.filter((e) => other.evidence_ids.includes(e.id));
@@ -81,7 +104,14 @@ export function computeMetrics(
 				const oValues = extractValues(other.text);
 				const sharedEntity = [...cEntities].some((e) => oEntities.has(e));
 				const sharedValue = cValues.some((v) => oValues.some((ov) => Math.abs(v - ov) / Math.max(v, ov, 1) < 0.1));
-				if (sharedEntity && sharedValue) {
+				const oScopedValues = extractScopedValues(other.text);
+				const sharedScopedValue = cScopedValues.some((v) =>
+					oScopedValues.some((ov) => v.unit === ov.unit && Math.abs(v.amount - ov.amount) / Math.max(v.amount, ov.amount, 1) < 0.1),
+				);
+				const sharedScope = cScopes.some((a) => propositionScopes(otherEvidence).some((b) =>
+					slotsRelated(a.subject, b.subject) && slotsRelated(a.predicate, b.predicate),
+				));
+				if ((sharedEntity && sharedValue) || (sharedScope && sharedScopedValue)) {
 					corroborated++;
 					break;
 				}
@@ -150,4 +180,41 @@ function extractValues(text: string): number[] {
 		if (!Number.isNaN(n) && n > 100) values.push(n);
 	}
 	return values;
+}
+
+interface ScopedValue {
+	amount: number;
+	unit: string;
+}
+
+/** Extract explicit-unit values omitted by the legacy >100 heuristic. */
+function extractScopedValues(text: string): ScopedValue[] {
+	const values: ScopedValue[] = [];
+	for (const m of text.matchAll(/(\$|€|£|CAD|USD)?\s?(\d[\d,.]*)\s*(\/kW\w*|\/MWh|bn|billion|million|%|MW\w*|kW\w*)?/gi)) {
+		const amount = Number(m[2].replace(/,/g, ""));
+		if (Number.isNaN(amount) || amount > 100 || (!m[1] && !m[3])) continue;
+		const currency = (m[1] ?? "").toLowerCase().replace("$", "usd").replace("€", "eur").replace("£", "gbp");
+		const suffix = (m[3] ?? "").toLowerCase().replace(/^bn$/, "billion");
+		values.push({ amount, unit: currency + suffix });
+	}
+	return values;
+}
+
+interface PropositionScope {
+	subject: string;
+	predicate: string;
+}
+
+function propositionScopes(evidence: Evidence[]): PropositionScope[] {
+	return evidence.flatMap((e) => {
+		const [subject = "", predicate = ""] = (e.proposition_key ?? "").split("|")
+			.map((slot) => slot.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim());
+		return subject && predicate && subject !== "none" && predicate !== "none" ? [{ subject, predicate }] : [];
+	});
+}
+
+function slotsRelated(a: string, b: string): boolean {
+	const aTokens = a.split(" ");
+	const bTokens = b.split(" ");
+	return aTokens.every((token) => bTokens.includes(token)) || bTokens.every((token) => aTokens.includes(token));
 }
