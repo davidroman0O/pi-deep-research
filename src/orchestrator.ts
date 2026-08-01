@@ -665,12 +665,19 @@ export async function runResearch(
 
 		// ── Phase 6d: scenario modeling (§18) ──────────────────────────────
 		let scenarioSection = "";
-		if (numericEvidence.length >= 3 && /\d{4}|20\d\d|horizon|projection|future|2030|2040|2050/i.test(meta.spec.time_horizon ?? "2035")) {
+		const scenarioHorizon = meta.spec.time_horizon ?? "";
+		const scenarioContext = `${meta.spec.objective} ${scenarioHorizon}`;
+		const scenarioRequested = scenarioHorizon.length > 0 && (
+			/\b(?:scenario|forecast|projection|projected|outlook|future)\b|\bnext\s+(?:\w+\s+)?(?:years?|decade)\b/i.test(scenarioContext) ||
+			[...scenarioContext.matchAll(/\b(?:19|20|21)\d{2}\b/g)]
+				.some(([year]) => Number(year) > new Date().getFullYear())
+		);
+		if (numericEvidence.length >= 3 && scenarioRequested) {
 			checkAbort();
 			progress("Modeling scenarios…");
 			const sc = await llmJson<{ metric: string; base_value: string; scenarios: Array<{ name: string; assumption: string; projections: Array<{ year: string; value: string }> }> }>(
 				deps.handle, SCENARIO_TOOL, SCENARIO_SYSTEM,
-				scenarioPrompt(meta.spec, valueClaims, meta.spec.time_horizon ?? "2035"),
+				scenarioPrompt(meta.spec, valueClaims, scenarioHorizon),
 				{ signal: deps.signal, temperature: 0.3 },
 			);
 			const years = [...new Set(sc.scenarios.flatMap((s) => s.projections.map((p) => p.year)))].sort();
