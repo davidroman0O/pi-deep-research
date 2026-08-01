@@ -44,6 +44,7 @@ import {
 	clusterRelationInput,
 	buildClaim,
 	relationInput,
+	claimTextSimilarity,
 	toEdge,
 	type ClaimRelation,
 } from "./claimgraph.ts";
@@ -584,7 +585,7 @@ export async function runResearch(
 			if (result.relation !== "unrelated") normalizationEdges.push({ ...toEdge(a.id, b.id, result.relation), reason: result.reason });
 		}
 
-		const pairs = prioritizePairs(claims)
+		const pairs = prioritizePairs(claims, sources)
 			.filter(([a, b]) => !checkedPairs.has(claimPairKey(a.id, b.id)))
 			.slice(0, MAX_RELATION_CHECKS);
 		const edgeOutcomes = await runParallel(
@@ -665,19 +666,12 @@ export async function runResearch(
 
 		// ── Phase 6d: scenario modeling (§18) ──────────────────────────────
 		let scenarioSection = "";
-		const scenarioHorizon = meta.spec.time_horizon ?? "";
-		const scenarioContext = `${meta.spec.objective} ${scenarioHorizon}`;
-		const scenarioRequested = scenarioHorizon.length > 0 && (
-			/\b(?:scenario|forecast|projection|projected|outlook|future)\b|\bnext\s+(?:\w+\s+)?(?:years?|decade)\b/i.test(scenarioContext) ||
-			[...scenarioContext.matchAll(/\b(?:19|20|21)\d{2}\b/g)]
-				.some(([year]) => Number(year) > new Date().getFullYear())
-		);
-		if (numericEvidence.length >= 3 && scenarioRequested) {
+		if (numericEvidence.length >= 3 && /\d{4}|20\d\d|horizon|projection|future|2030|2040|2050/i.test(meta.spec.time_horizon ?? "2035")) {
 			checkAbort();
 			progress("Modeling scenarios…");
 			const sc = await llmJson<{ metric: string; base_value: string; scenarios: Array<{ name: string; assumption: string; projections: Array<{ year: string; value: string }> }> }>(
 				deps.handle, SCENARIO_TOOL, SCENARIO_SYSTEM,
-				scenarioPrompt(meta.spec, valueClaims, scenarioHorizon),
+				scenarioPrompt(meta.spec, valueClaims, meta.spec.time_horizon ?? "2035"),
 				{ signal: deps.signal, temperature: 0.3 },
 			);
 			const years = [...new Set(sc.scenarios.flatMap((s) => s.projections.map((p) => p.year)))].sort();
@@ -1048,18 +1042,27 @@ function claimPairKey(a: string, b: string): string {
 	return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
-/** Relation-check pairs: shared sources and high confidence first. */
-function prioritizePairs(claims: Claim[]): Array<[Claim, Claim]> {
-	const pairs: Array<[Claim, Claim, number]> = [];
+/** Relation-check pairs: independent families, lexical proximity, then confidence. */
+function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Claim]> {
+	const familyBySource = new Map(
+		sources.map((source) => [
+			source.id,
+			source.source_family ?? detectSourceFamily(source.url, source.publisher ?? ""),
+		]),
+	);
+	const pairs: Array<[Claim, Claim, boolean, number, number]> = [];
 	for (let i = 0; i < claims.length; i++) {
 		for (let j = i + 1; j < claims.length; j++) {
 			const a = claims[i];
 			const b = claims[j];
-			const sharedSources = a.source_ids.filter((s) => b.source_ids.includes(s)).length;
-			pairs.push([a, b, sharedSources * 2 + a.confidence + b.confidence]);
+			const familiesA = new Set(a.source_ids.map((id) => familyBySource.get(id)).filter(Boolean));
+			const familiesB = new Set(b.source_ids.map((id) => familyBySource.get(id)).filter(Boolean));
+			const independent = [...familiesA].some((family) => !familiesB.has(family)) ||
+				[...familiesB].some((family) => !familiesA.has(family));
+			pairs.push([a, b, independent, claimTextSimilarity(a.text, b.text), a.confidence + b.confidence]);
 		}
 	}
-	pairs.sort((x, y) => y[2] - x[2]);
+	pairs.sort((x, y) => Number(y[2]) - Number(x[2]) || y[3] - x[3] || y[4] - x[4]);
 	return pairs.map(([a, b]) => [a, b]);
 }
 

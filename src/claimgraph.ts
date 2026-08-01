@@ -246,6 +246,11 @@ export function edgeCandidates(claims: Claim[]): Array<[Claim, Claim]> {
 	return out;
 }
 
+/** Lexical proximity used to spend bounded relation checks on related claims. */
+export function claimTextSimilarity(a: string, b: string): number {
+	return jaccard(tokenSet(a), tokenSet(b));
+}
+
 /** Serialize an edge into an LLM-friendly relation-check input. */
 export function relationInput(a: Claim, b: Claim): RelationContext {
 	return {
