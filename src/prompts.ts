@@ -320,7 +320,7 @@ export const ENTAIL_TOOL = {
 // ── Phase 6c: quantitative normalization (§18) ───────────────────────────
 export const NUMERIC_SYSTEM = controlPlane(
 	"normalize",
-	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
+	`Your sole directive is to normalize the numeric claims into a compact decision table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Return at most 12 decision-critical rows, ordered by relevance and boundary clarity. Deduplicate repeated subject/metric/value claims, keeping the clearest representative; omit incidental numbers outside the research objective. Group by metric and mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
 );
 
 export function numericPrompt(spec: Spec, valueClaims: string): string {
@@ -335,7 +335,7 @@ Submit normalized comparison rows via the tool.`;
 
 export const NUMERIC_TOOL = {
 	name: "submit_normalized_table",
-	description: "Submit normalized numeric comparison rows.",
+	description: "Submit at most 12 decision-critical normalized numeric rows.",
 	parameters: Type.Object({
 		rows: Type.Array(
 			Type.Object({
@@ -347,6 +347,7 @@ export const NUMERIC_TOOL = {
 				citation: Type.Integer({ description: "source number [n]" }),
 				comparable: Type.Boolean({ description: "false when bases/vintages/scopes differ materially" }),
 			}),
+			{ maxItems: 12 },
 		),
 	}),
 };

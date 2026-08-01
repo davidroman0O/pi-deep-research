@@ -122,12 +122,14 @@ export function proxyScores(m: RunMetrics, report?: string): Record<string, numb
 			return Math.max(1, Math.min(5, 1 + headings * 0.15 + (hasRec ? 1.5 : 0)));
 		})(),
 
-		// conciseness: words per claim (lower = more concise). ~15 words/claim → score 3.5
+		// conciseness: report should be information-dense, not terse.
+		// Old formula (5 - wpc * 0.1) penalized detailed claims — DRH flagged this as counterproductive.
+		// New: reward evidence-to-word density (more evidence per word = concise + informative).
 		conciseness: (() => {
 			if (!report || m.claims === 0) return 3;
 			const words = report.split(/\s+/).length;
-			const wpc = words / m.claims;
-			return Math.max(1, Math.min(5, 5 - wpc * 0.1));
+			const density = m.evidenceRecords / words; // higher = more information-dense
+			return Math.max(1, Math.min(5, 1 + density * 300));
 		})(),
 	};
 }
