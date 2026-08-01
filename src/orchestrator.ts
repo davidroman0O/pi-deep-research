@@ -642,11 +642,10 @@ export async function runResearch(
 		let numericSection = "";
 		if (numericEvidence.length >= 3) {
 			progress("Normalizing quantitative claims…");
-			const { rows: rawRows } = await llmJson<{ rows: Array<{ metric: string; subject: string; value: string; normalized?: string; conditions: string; citation: number; comparable: boolean }> }>(
+			const { rows } = await llmJson<{ rows: Array<{ metric: string; subject: string; value: string; normalized?: string; conditions: string; citation: number; comparable: boolean }> }>(
 				deps.handle, NUMERIC_TOOL, NUMERIC_SYSTEM, numericPrompt(meta.spec, valueClaims),
 				{ signal: deps.signal, temperature: 0.2 },
 			);
-			const rows = rawRows.slice(0, 12);
 			const byMetric = new Map<string, typeof rows>();
 			for (const r of rows) {
 				if (!byMetric.has(r.metric)) byMetric.set(r.metric, []);
