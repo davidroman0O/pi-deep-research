@@ -187,12 +187,12 @@ interface ScopedValue {
 	unit: string;
 }
 
-/** Extract explicit-unit values omitted by the legacy >100 heuristic. */
+/** Extract explicit-unit values for proposition-scoped corroboration. */
 function extractScopedValues(text: string): ScopedValue[] {
 	const values: ScopedValue[] = [];
 	for (const m of text.matchAll(/(\$|€|£|CAD|USD)?\s?(\d[\d,.]*)\s*(\/kW\w*|\/MWh|bn|billion|million|%|MW\w*|kW\w*)?/gi)) {
 		const amount = Number(m[2].replace(/,/g, ""));
-		if (Number.isNaN(amount) || amount > 100 || (!m[1] && !m[3])) continue;
+		if (Number.isNaN(amount) || (!m[1] && !m[3])) continue;
 		const currency = (m[1] ?? "").toLowerCase().replace("$", "usd").replace("€", "eur").replace("£", "gbp");
 		const suffix = (m[3] ?? "").toLowerCase().replace(/^bn$/, "billion");
 		values.push({ amount, unit: currency + suffix });

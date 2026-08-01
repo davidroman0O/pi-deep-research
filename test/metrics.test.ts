@@ -41,3 +41,35 @@ test("support edges count as independent corroboration", () => {
 	expect(metrics.corroboratedClaims).toBe(2);
 	expect(metrics.corroboratedFraction).toBe(1);
 });
+
+test("proposition-scoped values corroborate capital-cost claims above 100", () => {
+	const scopedEvidence: Evidence[] = [
+		{
+			id: "e1",
+			task_id: "t1",
+			source_id: "s1",
+			claim: "The overnight cost estimate was $20,139/kW.",
+			proposition_key: "smr program | overnight cost | 20139 usd/kw | 2024",
+			confidence: 0.9,
+		},
+		{
+			id: "e2",
+			task_id: "t1",
+			source_id: "s2",
+			claim: "An independent model put the overnight cost at $20,000/kW.",
+			proposition_key: "smr program | overnight cost | 20000 usd/kw | 2024",
+			confidence: 0.9,
+		},
+	];
+	const scopedClaims: Claim[] = scopedEvidence.map((item, index) => ({
+		...claims[index],
+		text: item.claim,
+		evidence_ids: [item.id],
+		source_ids: [item.source_id],
+	}));
+	const metrics = computeMetrics(
+		{ objective: "", dimensions: [] }, sources, scopedEvidence, scopedClaims, [], audit,
+	);
+	expect(metrics.corroboratedClaims).toBe(2);
+	expect(metrics.corroboratedFraction).toBe(1);
+});
