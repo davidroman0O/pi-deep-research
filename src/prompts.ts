@@ -424,7 +424,7 @@ export const CITATION_REPAIR_TOOL = {
 // ── Phase 7a: report outline (§21: approved outline before writing) ─────
 export const OUTLINE_SYSTEM = controlPlane(
 	"outline",
-	`Your sole directive is to design the report outline. Sections must map to the spec's dimensions and the claim graph's themes — never one section per source. Each section gets an objective (what decision it informs) and the claim ids it will use. Order: context/market first, evidence themes, contradictions, gaps, recommendation last. Aim for thorough, decision-grade coverage — more sections with tight scope beat few bloated ones.`,
+	`Your sole directive is to design the report outline. Sections must map to the spec's dimensions and the claim graph's themes — never one section per source. Each section gets an objective (what decision it informs) and the claim ids it will use. Use 4–6 sections total, combining related dimensions while preserving decision-grade coverage. Order: context/market first, evidence themes, contradictions, gaps, recommendation last.`,
 );
 
 export function outlinePrompt(spec: Spec, claimsDigest: string, synthesesDigest: string): string {
@@ -453,7 +453,7 @@ export const OUTLINE_TOOL = {
 				objective: Type.String({ description: "The decision this section informs." }),
 				claim_ids: Type.Array(Type.String(), { description: "C-ids from the verified claims list." }),
 			}),
-			{ minItems: 4 },
+			{ minItems: 4, maxItems: 6 },
 		),
 	}),
 };
@@ -461,7 +461,7 @@ export const OUTLINE_TOOL = {
 // ── Phase 7b: section drafting (§21.1 draft_section) ────────────────────
 export const SECTION_SYSTEM = controlPlane(
 	"draft_section",
-	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) ONE factual claim per citation — never stack multiple claims onto a single [n]; when a sentence carries several facts, cite each fact separately [1][2]; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 500–1200 words for this section.`,
+	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) ONE factual claim per citation — never stack multiple claims onto a single [n]; when a sentence carries several facts, cite each fact separately [1][2]; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 200–350 words for this section; omit repeated setup and source-by-source narration.`,
 );
 
 export function sectionPrompt(

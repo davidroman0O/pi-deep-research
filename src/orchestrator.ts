@@ -878,18 +878,6 @@ export async function runResearch(
 				: assembled + insert;
 		}
 
-		// Citation map appendix (§22 reverse map: claim → source → verbatim quote)
-		const citationMap =
-			"\n\n## Citation Map\n\n_Each source with the verbatim evidence quotes extracted from it — passage-level traceability for every citation._\n" +
-			sources
-				.map((s, i) => {
-					const quotes = allEvidence.filter((e) => e.source_id === s.id && e.quote).slice(0, 5);
-					if (quotes.length === 0) return "";
-					return `\n### [${i + 1}] ${s.title}\n${quotes.map((q) => `> "${q.quote}" — *supports: ${q.claim}*`).join("\n")}`;
-				})
-				.filter(Boolean)
-				.join("\n");
-
 		// Methodology disclosure (mechanical — DR-heavy-style transparency)
 		const methodology =
 			`\n\n## Methodology\n\n` +
@@ -899,7 +887,7 @@ export async function runResearch(
 			`- **Audits:** citation entailment (${audit.citation_audit.checked} checked, ${audit.citation_audit.failures.length} unresolved), coverage ${audit.coverage.pass ? "pass" : "partial"}, source diversity ${(audit.source_diversity.dominant_share * 100).toFixed(0)}% max publisher share\n` +
 			(meta.stats.sources_ingested >= meta.config.max_sources ? `- **Budget note:** source cap reached — deeper coverage available with a higher max_sources/profile.\n` : "");
 
-		await store.saveReport(assembled + citationMap + methodology + auditNote);
+		await store.saveReport(assembled + methodology + auditNote);
 
 		meta.status = "completed";
 		await store.saveMeta(meta);
@@ -909,7 +897,7 @@ export async function runResearch(
 
 		return {
 			runId,
-			report: assembled + citationMap + methodology + auditNote,
+			report: assembled + methodology + auditNote,
 			meta,
 			sources,
 			evidence: allEvidence,

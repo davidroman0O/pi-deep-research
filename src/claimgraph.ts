@@ -103,7 +103,9 @@ export function claimClusterCandidates(clusters: Evidence[][]): Array<[number, n
 	}
 	return [...pairKeys]
 		.map((key) => key.split(":").map(Number) as [number, number])
-		.filter(([a, b]) => clustersSlotCompatible(clusters[a], clusters[b]))
+		.filter(([a, b]) =>
+			clustersSlotCompatible(clusters[a], clusters[b]) || clustersDescribeSameMetric(clusters[a], clusters[b]),
+		)
 		.sort(([a1, b1], [a2, b2]) => a1 - a2 || b1 - b2);
 }
 
@@ -284,6 +286,17 @@ function clustersSlotCompatible(a: Evidence[], b: Evidence[]): boolean {
 	return a.some((left) => b.some((right) => evidenceSlotCompatible(left, right)));
 }
 
+/** Related subject+predicate pairs still need relation checks when their values conflict. */
+function clustersDescribeSameMetric(a: Evidence[], b: Evidence[]): boolean {
+	return a.some((left) => b.some((right) => {
+		const slotsA = parsePropositionKey(left.proposition_key);
+		const slotsB = parsePropositionKey(right.proposition_key);
+		if (left.source_id === right.source_id) return false;
+		return !!slotsA && !!slotsB &&
+			slotsMostlyRelated(slotsA.subject, slotsB.subject) && slotsMostlyRelated(slotsA.predicate, slotsB.predicate);
+	}));
+}
+
 function evidenceSlotCompatible(a: Evidence, b: Evidence): boolean {
 	const slotsA = parsePropositionKey(a.proposition_key);
 	const slotsB = parsePropositionKey(b.proposition_key);
@@ -309,6 +322,16 @@ function slotsRelated(a: string, b: string): boolean {
 	const acronymA = tokensA.map((token) => token[0]).join("");
 	const acronymB = tokensB.map((token) => token[0]).join("");
 	return (acronymA.length > 1 && tokensB.includes(acronymA)) || (acronymB.length > 1 && tokensA.includes(acronymB));
+}
+
+function slotsMostlyRelated(a: string, b: string): boolean {
+	const tokensA = new Set(slotTokens(a));
+	const tokensB = new Set(slotTokens(b));
+	if (tokensA.size === 0 || tokensB.size === 0) return false;
+	let shared = 0;
+	for (const token of tokensA) if (tokensB.has(token)) shared++;
+	// ponytail: cheap blocker only; the relation model makes the semantic decision.
+	return shared / (tokensA.size + tokensB.size - shared) >= 0.5;
 }
 
 function slotTokens(s: string): string[] {

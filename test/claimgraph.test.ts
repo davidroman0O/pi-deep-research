@@ -38,12 +38,12 @@ const conflicts: Evidence[] = [
 
 const mockRelation = (_a: Evidence[], _b: Evidence[]): ClaimRelation => "duplicate";
 
-test("relation-gated coalescing merges paraphrases but never hard conflicts", () => {
+test("relation candidates include comparable conflicts but coalescing never merges them", () => {
 	for (const conflict of conflicts) {
 		const provisional = clusterClaims([first, paraphrase, conflict]);
 		const blockedPairs = claimClusterCandidates(provisional);
 		expect(provisional.map((cluster) => cluster.map((e) => e.id))).toEqual([["e1"], ["e2"], [conflict.id]]);
-		expect(blockedPairs).toEqual([[0, 1]]);
+		expect(blockedPairs).toEqual([[0, 1], [1, 2]]);
 
 		const mockedDuplicates = blockedPairs.filter(([a, b]) => mockRelation(provisional[a], provisional[b]) === "duplicate");
 		const merged = coalesceClaimClusters(provisional, mockedDuplicates);
