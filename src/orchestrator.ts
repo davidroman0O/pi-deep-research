@@ -316,7 +316,8 @@ export async function runResearch(
 						const dup = checkDuplicate(res.url, doc.text, known);
 						if (dup.isDuplicate) { await store.log("duplicate_skipped", { url: res.url, reason: dup.reason }); continue; }
 
-						const knownTexts = (await store.loadEvidence()).map((e) => e.claim + " " + (e.quote ?? ""));
+						const knownEvidence = await store.loadEvidence();
+						const knownTexts = knownEvidence.map((e) => e.claim + " " + (e.quote ?? ""));
 						const nov = novelty(doc.text, knownTexts);
 						const candidatePublisher = hostOf(res.url);
 						const publisherAlreadyKnown = sources.some((s) => s.publisher === candidatePublisher);
@@ -329,7 +330,8 @@ export async function runResearch(
 						const wrapped = wrapUntrusted(`${doc.title} (${res.url})`, assembleContext(selected), doc.trust);
 
 						const extracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
-							extractPrompt(task, doc.title, doc.url, wrapped), { signal: deps.signal, temperature: 0.2 });
+							extractPrompt(task, doc.title, doc.url, wrapped, knownEvidence.filter((e) => e.task_id === task.id)),
+							{ signal: deps.signal, temperature: 0.2 });
 
 						const evidenceList = Array.isArray(extracted?.evidence) ? extracted.evidence : [];
 						if (evidenceList.length === 0) { await store.log("no_evidence", { url: res.url, task: task.id }); continue; }
@@ -438,7 +440,8 @@ export async function runResearch(
 						const vselected = selectPassages(verifyTask.question, vpassages, EXTRACT_CHAR_BUDGET);
 						const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
 						const vextracted = await llmJson<ExtractToolArgs>(deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
-							extractPrompt(verifyTask, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
+							extractPrompt(verifyTask, vdoc.title, res.url, vwrapped, [claimToVerify]),
+							{ signal: deps.signal, temperature: 0.2 });
 						const vlist = prepareVerificationEvidence(
 							Array.isArray(vextracted?.evidence) ? vextracted.evidence : [],
 							targetPropositionKey,
@@ -964,7 +967,8 @@ async function sourcePipeline(
 	const wrapped = wrapUntrusted(`${doc.title} (${res.url})`, context, doc.trust);
 
 	const extracted = await llmJson<ExtractToolArgs>(
-		deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM, extractPrompt(task, doc.title, doc.url, wrapped),
+		deps.handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
+		extractPrompt(task, doc.title, doc.url, wrapped, existingEvidence.filter((e) => e.task_id === task.id)),
 		{ signal: deps.signal, temperature: 0.2 },
 	);
 
