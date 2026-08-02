@@ -20,7 +20,7 @@ export interface TaskCoverage {
 	taskId: string;
 	coverage: number; // 0..1, fraction of required_evidence satisfied
 	uncertainty: number; // §19 formula
-	gapScore: number; // priority × (1 − coverage) × uncertainty
+	gapScore: number; // priority × unmet requirements × uncertainty
 }
 
 export interface CoverageMatrix {
@@ -101,8 +101,8 @@ export function buildCoverageMatrix(
 		);
 		const uncertainty = Math.max(0, 1 - 0.3 * independentCount - (hasContradiction ? 0.2 : 0));
 
-		// gap score: priority × (1 − coverage) × uncertainty
-		const gapScore = task.priority * (1 - coverage) * uncertainty;
+		// gap score: priority × unmet completion requirements × uncertainty
+		const gapScore = task.priority * (reqCount - satisfied) * uncertainty;
 
 		return { taskId: task.id, coverage, uncertainty, gapScore };
 	});
