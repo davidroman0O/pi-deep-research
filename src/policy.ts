@@ -33,6 +33,7 @@ export interface MemorySnapshot {
 		status: string;
 		sourceCount: number;
 		independentPublishers: number;
+		publishers: string[];
 		corroborated: boolean;
 	}>;
 	contradictions: number;
@@ -55,15 +56,16 @@ export function buildSnapshot(
 		spec,
 		tasks: tasks.map((t) => ({ id: t.id, question: t.question, status: t.status, depth: t.depth })),
 		claims: claims.map((c) => {
-			const pubs = new Set(c.source_ids.map((sid) => sourcePublisher.get(sid)).filter(Boolean) as string[]);
+			const publishers = [...new Set(c.source_ids.map((sid) => sourcePublisher.get(sid)).filter(Boolean) as string[])];
 			return {
 				id: c.id,
 				text: c.text,
 				confidence: c.confidence,
 				status: c.status,
 				sourceCount: c.source_ids.length,
-				independentPublishers: pubs.size,
-				corroborated: pubs.size >= 2,
+				independentPublishers: publishers.length,
+				publishers,
+				corroborated: publishers.length >= 2,
 			};
 		}),
 		contradictions: edges.filter((e) => e.relation === "contradicts").length,

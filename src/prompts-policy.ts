@@ -28,7 +28,7 @@ ${s.tasks.map((t) => `    <task id="${t.id}" status="${t.status}" depth="${t.dep
   </tasks>
   <evidence_summary claims="${s.claims.length}" corroborated_2plus_publishers="${corrob}" single_source="${singleSource}" contradictions="${s.contradictions}" />
   <claims_needing_corroboration>
-${s.claims.filter((c) => !c.corroborated && c.sourceCount === 1).slice(0, 12).map((c) => `    <claim id="${c.id}" conf="${c.confidence.toFixed(2)}">${c.text}</claim>`).join("\n")}
+${s.claims.filter((c) => !c.corroborated && c.sourceCount === 1).slice(0, 12).map((c) => `    <claim id="${c.id}" conf="${c.confidence.toFixed(2)}" publisher_names="${c.publishers.join(" | ")}">${c.text}</claim>`).join("\n")}
   </claims_needing_corroboration>
   <coverage covered="${s.coverage.covered.length}/${s.coverage.covered.length + s.coverage.uncovered.length}" uncovered="${s.coverage.uncovered.join(" | ")}" />
   <budget sources="${s.budget.sourcesUsed}/${s.budget.sourcesMax}" iterations="${s.budget.iterationsUsed}/${s.budget.iterationsMax}" />
@@ -68,7 +68,9 @@ export const ACTION_POLICY_SYSTEM = controlPlane(
 - "summarize": write the task memo and mark the task done — use when the task has >= 2 corroborated claims or sources are saturated for it.
 - "stop": no further action adds value — use when coverage is adequate AND remaining claims are corroborated AND budget is near exhaustion.
 
-Prioritize "verify" over "search" whenever a high-importance claim sits single-sourced — independent corroboration is the highest-value action for research quality. Estimate EIG honestly: a verify on a contested claim is worth more than another broad search.`,
+Prioritize "verify" over "search" whenever a high-importance claim sits single-sourced — independent corroboration is the highest-value action for research quality. Estimate EIG honestly: a verify on a contested claim is worth more than another broad search.
+
+Reason at the atomic-proposition level, not by claim id. If semantically equivalent claims already name at least two different publishers, treat that proposition as corroborated even when each row is individually single-sourced, and do not verify it again. Spend the next action on a different proposition or an uncovered organization.`,
 );
 
 export function actionPolicyPrompt(task: Task, s: MemorySnapshot): string {
@@ -81,7 +83,7 @@ ${task.question}
 ${snapshotXml(s)}
 
 <task_relevant_claims>
-${taskClaims.map((c) => `  <claim id="${c.id}" conf="${c.confidence.toFixed(2)}" sources="${c.sourceCount}" publishers="${c.independentPublishers}" corroborated="${c.corroborated}">${c.text}</claim>`).join("\n")}
+${taskClaims.map((c) => `  <claim id="${c.id}" conf="${c.confidence.toFixed(2)}" sources="${c.sourceCount}" publishers="${c.independentPublishers}" publisher_names="${c.publishers.join(" | ")}" corroborated="${c.corroborated}">${c.text}</claim>`).join("\n")}
 </task_relevant_claims>
 
 Choose the next action via the tool.`;
