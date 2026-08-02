@@ -45,25 +45,18 @@ export function allowedActions(state: TaskState): string[] {
 /** Transition a task's state based on evidence accrued. */
 export function transitionState(task: Task, evidence: Evidence[], sources: Source[], edges: ClaimEdge[]): TaskState {
 	const taskEvidence = evidence.filter((e) => e.task_id === task.id);
-	const taskSources = sources.filter((s) => taskEvidence.some((e) => e.source_id === s.id));
 
 	switch (task.state) {
 		case "open":
-			if (taskSources.length >= 1) return "discovery";
-			return "open";
-
 		case "discovery":
-			if (taskEvidence.length >= 1) return "evidence_gathering";
-			if (taskSources.length >= 1) return "discovery";
-			return "discovery";
-
 		case "evidence_gathering": {
-			// Check if required_evidence is satisfied → corroboration
+			// One action can ingest several sources, so catch up to the evidence
+			// instead of spending another action in each intermediate state.
+			if (taskEvidence.length === 0) return task.state;
 			const satisfied = evaluateRequiredEvidence(task, evidence, sources, edges);
 			if (satisfied || task.search_attempts >= MAX_ATTEMPTS_PER_TASK) return "corroboration";
 			return "evidence_gathering";
 		}
-
 		case "corroboration": {
 			// Check if corroboration requirements met → resolving
 			const corroborationMet = checkCorroboration(task, evidence, sources);

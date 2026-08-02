@@ -39,6 +39,17 @@ const sources: Source[] = [{
 	hash: "1",
 }];
 
+test("state transition catches up to accumulated evidence", () => {
+	const fresh = { ...task, state: "open" as const, search_attempts: 1 };
+	expect(transitionState(fresh, evidence, sources, [])).toBe("corroboration");
+
+	const underSupported = {
+		...fresh,
+		required_evidence: ["≥2 independent publishers"],
+	};
+	expect(transitionState(underSupported, evidence, sources, [])).toBe("evidence_gathering");
+});
+
 test("search cap still permits claim verification", () => {
 	expect(transitionState(task, evidence, sources, [])).toBe("corroboration");
 	expect(isTaskComplete(task, evidence, sources, [])).toBe(false);
