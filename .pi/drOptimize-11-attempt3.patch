@@ -1,0 +1,47 @@
+diff --git a/src/claimgraph.ts b/src/claimgraph.ts
+--- a/src/claimgraph.ts
++++ b/src/claimgraph.ts
+@@ -16,7 +16,7 @@ export function clusterClaims(evidence: Evidence[]): Evidence[][] {
+ 	const keyGroups = new Map<string, Evidence[]>();
+ 	for (const e of evidence) {
+ 		if (e.proposition_key) {
+-			const key = e.proposition_key.trim().toLowerCase();
++			const key = normalizePropositionKey(e.proposition_key);
+ 			if (!keyGroups.has(key)) keyGroups.set(key, []);
+ 			keyGroups.get(key)!.push(e);
+ 		}
+@@ -30,7 +30,7 @@ export function clusterClaims(evidence: Evidence[]): Evidence[][] {
+ 		// If this evidence has a proposition_key, merge all evidence with the same key
+ 		const pk = evidence[i].proposition_key;
+ 		if (pk) {
+-			const key = pk.trim().toLowerCase();
++			const key = normalizePropositionKey(pk);
+ 			for (const other of (keyGroups.get(key) ?? [])) {
+ 				if (other.id !== evidence[i].id && !used.has(other.id)) {
+ 					cluster.push(other);
+@@ -53,6 +53,14 @@ export function clusterClaims(evidence: Evidence[]): Evidence[][] {
+ 		clusters.push(cluster);
+ 	}
+ 	return clusters;
+ }
++
++function normalizePropositionKey(key: string): string {
++	return key
++		.toLowerCase()
++		.split("|")
++		.map((slot) => slot.trim().replace(/\s+/g, " ").replace(/(\d),(?=\d)/g, "$1"))
++		.join("|");
++}
+ 
+ export type ClaimRelation = "supports" | "contradicts" | "qualifies" | "duplicate" | "derived" | "unrelated";
+diff --git a/test/controller.test.ts b/test/controller.test.ts
+--- a/test/controller.test.ts
++++ b/test/controller.test.ts
+@@ -55,6 +55,6 @@ test("verification targets are unique uncorroborated proposition clusters", ()
+ 	];
+ 	const targetEvidence: Evidence[] = [
+ 		{ ...evidence[0], id: "e1", source_id: "s1", claim: "NuScale overnight cost was $20,139/kW in 2022", proposition_key: "nuscale | overnight cost | 20139 usd/kw | 2022", confidence: 0.9 },
+-		{ ...evidence[0], id: "e2", source_id: "s2", claim: "The 2022 NuScale estimate was $20,139 per kW", proposition_key: "nuscale | overnight cost | 20139 usd/kw | 2022", confidence: 0.8 },
++		{ ...evidence[0], id: "e2", source_id: "s2", claim: "An independent estimate confirms the same figure", proposition_key: " NuScale|overnight  cost|20,139 usd/kw|2022 ", confidence: 0.8 },
+ 		{ ...evidence[0], id: "e3", source_id: "s1", claim: "NuScale's cancellation charge was $50 million in 2029", proposition_key: "nuscale | cancellation charge | 50 million usd | 2029", confidence: 0.7 },
+ 	];

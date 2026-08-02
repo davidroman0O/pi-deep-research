@@ -1,0 +1,41 @@
+diff --git a/src/controller.ts b/src/controller.ts
+--- a/src/controller.ts
++++ b/src/controller.ts
+@@ -154,8 +154,16 @@ export function selectVerificationTargets(evidence: Evidence[], sources: Source[
+ 			);
+ 			return families.size < 2;
+ 		})
+ 		.map((cluster) => cluster.reduce((best, e) => e.confidence > best.confidence ? e : best))
+-		.sort((a, b) => b.confidence - a.confidence);
++		.sort((a, b) =>
++			Number(hasConcreteValue(b)) - Number(hasConcreteValue(a)) ||
++			b.confidence - a.confidence,
++		);
++}
++
++function hasConcreteValue(evidence: Evidence): boolean {
++	const valueSlot = evidence.proposition_key?.split("|")[2]?.trim();
++	return Object.keys(evidence.values ?? {}).length > 0 || (!!valueSlot && valueSlot !== "none");
+ }
+ 
+ // ── action safety guards (§2.6) ──────────────────────────────────────────
+diff --git a/test/controller.test.ts b/test/controller.test.ts
+--- a/test/controller.test.ts
++++ b/test/controller.test.ts
+@@ -57,12 +57,13 @@ test("verification targets are unique uncorroborated proposition clusters", ()
+ 		{ ...evidence[0], id: "e1", source_id: "s1", claim: "NuScale overnight cost was $20,139/kW in 2022", proposition_key: "nuscale | overnight cost | 20139 usd/kw | 2022", confidence: 0.9 },
+ 		{ ...evidence[0], id: "e2", source_id: "s2", claim: "The 2022 NuScale estimate was $20,139 per kW", proposition_key: "nuscale | overnight cost | 20139 usd/kw | 2022", confidence: 0.8 },
+ 		{ ...evidence[0], id: "e3", source_id: "s1", claim: "NuScale's cancellation charge was $50 million in 2029", proposition_key: "nuscale | cancellation charge | 50 million usd | 2029", confidence: 0.7 },
++		{ ...evidence[0], id: "e4", source_id: "s1", claim: "NuScale has NRC design approval", proposition_key: "nuscale | has nrc design approval | none | united states", confidence: 0.99 },
+ 	];
+ 
+-	expect(selectVerificationTargets(targetEvidence, targetSources).map((e) => e.id)).toEqual(["e1", "e3"]);
++	expect(selectVerificationTargets(targetEvidence, targetSources).map((e) => e.id)).toEqual(["e1", "e3", "e4"]);
+ 
+-	const independentSupport: Evidence = { ...targetEvidence[0], id: "e4", source_id: "s3", confidence: 0.85 };
+-	expect(selectVerificationTargets([...targetEvidence, independentSupport], targetSources).map((e) => e.id)).toEqual(["e3"]);
++	const independentSupport: Evidence = { ...targetEvidence[0], id: "e5", source_id: "s3", confidence: 0.85 };
++	expect(selectVerificationTargets([...targetEvidence, independentSupport], targetSources).map((e) => e.id)).toEqual(["e3", "e4"]);
+ });
+ 
+ test("ordinary search leaves source slots for verification", () => {

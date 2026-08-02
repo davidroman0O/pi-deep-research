@@ -1,0 +1,24 @@
+diff --git a/src/orchestrator.ts b/src/orchestrator.ts
+--- a/src/orchestrator.ts
++++ b/src/orchestrator.ts
+@@ -356,16 +356,17 @@ export async function runResearch(
+ 			// ── verify safety net (§15 — ensures corroboration even if model didn't choose verify) ──
+ 			const postTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
+ 			const singleSourced = selectVerificationTargets(postTaskEvidence, sources);
++			const verificationSourceLimit = sourceLimitForAction(config.max_sources, "verify");
+ 			// ponytail: no priority gate — the source-cap guard below already bounds
+ 			// cost, and high-priority tasks run first so they can't be starved.
+ 			// Gating on priority left low-priority tasks' high-confidence claims
+ 			// permanently single-sourced, capping corroboratedFraction.
+-			if (singleSourced.length > 0 && sources.length < config.max_sources - 2) {
++			if (singleSourced.length > 0 && sources.length < verificationSourceLimit) {
+ 				checkAbort();
+ 				const claimsToVerify = singleSourced.slice(0, VERIFY_SAFETY_NET_CLAIMS);
+ 				progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced — corroborating ${claimsToVerify.length}`);
+ 				let verifyClaimsTried = 0;
+ 				for (const claimToVerify of claimsToVerify) {
+-					if (sources.length >= config.max_sources - 2) break;
++					if (sources.length >= verificationSourceLimit) break;
+ 					// ponytail: skip if an earlier verify this pass already lifted this claim to ≥2 families
+ 					// — cheap family recount avoids a wasted search+ingest round.
+ 					const famNow = new Map(sources.map((s) => [s.id, s.source_family ?? detectSourceFamily(s.url, s.publisher ?? "")]));
