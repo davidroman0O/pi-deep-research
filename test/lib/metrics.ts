@@ -83,8 +83,8 @@ export function formatMetrics(m: RunMetrics): string {
  */
 export function proxyScores(m: RunMetrics, report?: string): Record<string, number> {
 	return {
-		// citation_integrity: map pass rate to 1-5
-		citation_integrity: Math.max(1, Math.min(5, Math.round(m.citationPassRate * 5))),
+		// citation_integrity: continuous scale (DRH #4: rounding created ±0.3 discontinuities)
+		citation_integrity: Math.max(1, Math.min(5, m.citationPassRate * 5)),
 
 		// coverage: dimensions covered / total
 		coverage: m.dimensionsTotal > 0
@@ -122,14 +122,16 @@ export function proxyScores(m: RunMetrics, report?: string): Record<string, numb
 			return Math.max(1, Math.min(5, 1 + headings * 0.15 + (hasRec ? 1.5 : 0)));
 		})(),
 
-		// conciseness: report should be information-dense, not terse.
-		// Old formula (5 - wpc * 0.1) penalized detailed claims — DRH flagged this as counterproductive.
-		// New: reward evidence-to-word density (more evidence per word = concise + informative).
+		// conciseness: penalize redundancy and verbosity, not density (DRH #4: old formula saturated at 1.33%)
 		conciseness: (() => {
 			if (!report || m.claims === 0) return 3;
 			const words = report.split(/\s+/).length;
-			const density = m.evidenceRecords / words; // higher = more information-dense
-			return Math.max(1, Math.min(5, 1 + density * 300));
+			const claimsPerKword = m.claims / (words / 1000); // claim density per 1000 words
+			// Sweet spot: 30-80 claims per 1000 words. Below 30 = verbose, above 80 = claim-stacking.
+			const densityScore = claimsPerKword < 30 ? 1 + claimsPerKword / 30 * 2
+				: claimsPerKword <= 80 ? 3 + (80 - claimsPerKword) / 50 * 2
+				: Math.max(1, 3 - (claimsPerKword - 80) / 40);
+			return Math.max(1, Math.min(5, densityScore));
 		})(),
 	};
 }
