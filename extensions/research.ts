@@ -54,8 +54,8 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			topic: Type.String({ description: "The research question to investigate in depth." }),
 			profile: Type.Optional(
-				Type.Union([Type.Literal("quick"), Type.Literal("standard"), Type.Literal("deep"), Type.Literal("heavy"), Type.Literal("ultra")], {
-					description: "Depth preset: quick (~10 sources), standard (default), deep (~40 sources), heavy (~60 sources), ultra (~100 sources — maximal length and audit rigor). Explicit params below override the preset.",
+				Type.Union([Type.Literal("quick"), Type.Literal("benchmark"), Type.Literal("standard"), Type.Literal("deep"), Type.Literal("heavy"), Type.Literal("ultra")], {
+					description: "Depth preset: quick (~10 sources), benchmark (~15 sources), standard (default), deep (~40 sources), heavy (~60 sources), ultra (~100 sources — maximal length and audit rigor). Explicit params below override the preset.",
 				}),
 			),
 			breadth: Type.Optional(Type.Integer({ description: "Sources per search round (default 5)." })),
