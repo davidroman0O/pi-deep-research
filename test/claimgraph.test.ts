@@ -56,6 +56,30 @@ test("relation candidates include comparable conflicts but coalescing never merg
 	}
 });
 
+test("relation candidates normalize emission pluralization", () => {
+	const singular: Evidence = {
+		...first,
+		id: "e-emission-singular",
+		source_id: "s-emission-singular",
+		claim: "Scrap-EAF emitted 0.7 tonnes of CO2 per tonne of crude steel in 2023.",
+		proposition_key: "scrap eaf | emission intensity | 0.7 tonnes of co2 per tonne of crude steel | 2023",
+	};
+	const plural: Evidence = {
+		...first,
+		id: "e-emission-plural",
+		source_id: "s-emission-plural",
+		claim: "Current scrap-EAF emissions intensity is 0.7 tonnes CO2 per tonne steel.",
+		proposition_key: "scrap-eaf | emissions intensity | 0.7 tonnes co2 per tonne steel | current",
+	};
+
+	const provisional = clusterClaims([singular, plural]);
+	expect(provisional.map((cluster) => cluster.map((e) => e.id))).toEqual([
+		[singular.id],
+		[plural.id],
+	]);
+	expect(claimClusterCandidates(provisional)).toEqual([[0, 1]]);
+});
+
 test("coalescing requires duplicate relations to every member", () => {
 	const third = {
 		...paraphrase,

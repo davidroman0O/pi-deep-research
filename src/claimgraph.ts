@@ -330,8 +330,8 @@ function slotsRelated(a: string, b: string): boolean {
 }
 
 function slotsMostlyRelated(a: string, b: string): boolean {
-	const tokensA = new Set(slotTokens(a));
-	const tokensB = new Set(slotTokens(b));
+	const tokensA = new Set(slotTokens(a).map((token) => token === "emissions" ? "emission" : token));
+	const tokensB = new Set(slotTokens(b).map((token) => token === "emissions" ? "emission" : token));
 	if (tokensA.size === 0 || tokensB.size === 0) return false;
 	let shared = 0;
 	for (const token of tokensA) if (tokensB.has(token)) shared++;
