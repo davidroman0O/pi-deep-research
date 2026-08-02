@@ -795,7 +795,7 @@ export async function runResearch(
 		// ── Phase 8: audits + citation repair (§22.1) ────────────────────────
 		checkAbort();
 		progress("Running citation + quality audits…");
-		const citationAudit = await auditCitations(deps.handle, report, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
+		let citationAudit = await auditCitations(deps.handle, report, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
 
 		// repair pass: re-cite or hedge failed citations instead of just flagging
 		let finalReport = report;
@@ -850,6 +850,10 @@ export async function runResearch(
 			}
 			// remove reviewer-cleared items from the failure list
 			citationAudit.failures = citationAudit.failures.filter((f) => !keptSentences.has(f.sentence));
+			if (repaired > 0) {
+				citationAudit = await auditCitations(deps.handle, finalReport, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
+				citationAudit.failures = citationAudit.failures.filter((f) => !keptSentences.has(f.sentence));
+			}
 			await store.log("citation_repair", { attempted: repairs.length, applied: repaired, cleared: keptSentences.size });
 			citationsRepaired = repaired;
 		}
@@ -865,7 +869,7 @@ export async function runResearch(
 			injectionFlags: [...new Set(injectionFlags)],
 		});
 		const audit = assembleAudit(staticAudits, citationAudit);
-		// record repairs honestly: they were applied post-audit, not re-verified
+		// record how many changes produced the re-audited final report
 		(audit.citation_audit as { repaired?: number }).repaired = citationsRepaired;
 		await store.saveAudit(audit);
 
