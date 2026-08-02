@@ -321,7 +321,7 @@ export const ENTAIL_TOOL = {
 // ── Phase 6c: quantitative normalization (§18) ───────────────────────────
 export const NUMERIC_SYSTEM = controlPlane(
 	"normalize",
-	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Within each subject/metric/cost-basis group, keep the newest non-superseded estimate that matches <current_as_of> and <time_horizon>; retain older rows only to establish a trajectory or material basis mismatch. Return at most 12 rows total, prioritizing the objective's central metric and retaining secondary metrics only when they materially affect the decision. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
+	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Within each subject/metric/cost-basis group, keep the newest non-superseded estimate that matches <current_as_of> and <time_horizon>; retain older rows only to establish a trajectory or material basis mismatch. For a single-metric objective, return at most 6 rows for that metric and omit secondary metrics; use up to 12 rows only when the objective explicitly asks to compare multiple metrics. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
 );
 
 export function numericPrompt(spec: Spec, valueClaims: string): string {
@@ -428,7 +428,7 @@ export const CITATION_REPAIR_TOOL = {
 // ── Phase 7a: report outline (§21: approved outline before writing) ─────
 export const OUTLINE_SYSTEM = controlPlane(
 	"outline",
-	`Your sole directive is to design the report outline. Sections must map to the spec's dimensions and the claim graph's themes — never one section per source. Each section gets an objective (what decision it informs) and the claim ids it will use. Use 4–6 sections total, combining related dimensions while preserving decision-grade coverage. Order: context/market first, evidence themes, contradictions, gaps, recommendation last.`,
+	`Your sole directive is to design the report outline. Sections must map to the spec's dimensions and the claim graph's themes — never one section per source. Each section gets an objective (what decision it informs) and the claim ids it will use. Use 2–4 sections total, proportional to the objective: 2–3 for a single metric or fact/range question, 4 only for genuinely multi-part decisions. Combine related dimensions while preserving decision-grade coverage; answer-first ordering is preferred.`,
 );
 
 export function outlinePrompt(spec: Spec, claimsDigest: string, synthesesDigest: string): string {
@@ -457,7 +457,7 @@ export const OUTLINE_TOOL = {
 				objective: Type.String({ description: "The decision this section informs." }),
 				claim_ids: Type.Array(Type.String(), { description: "C-ids from the verified claims list." }),
 			}),
-			{ minItems: 4, maxItems: 6 },
+			{ minItems: 2, maxItems: 4 },
 		),
 	}),
 };
@@ -465,7 +465,7 @@ export const OUTLINE_TOOL = {
 // ── Phase 7b: section drafting (§21.1 draft_section) ────────────────────
 export const SECTION_SYSTEM = controlPlane(
 	"draft_section",
-	`Your sole directive is to write ONE report section in full detail from the evidence bundle provided. Requirements: (1) ONE factual claim per citation — never stack multiple claims onto a single [n]; when a sentence carries several facts, cite each fact separately [1][2]; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 200–350 words for this section; omit repeated setup and source-by-source narration.`,
+	`Your sole directive is to write ONE concise report section from the evidence bundle provided. Requirements: (1) ONE factual claim per citation — never stack multiple claims onto a single [n]; when a sentence carries several facts, cite each fact separately [1][2]; (2) preserve numbers with units, currency year, and conditions; (3) use tables when comparing 3+ items; (4) state uncertainty and confidence explicitly; (5) never introduce facts absent from the bundle; (6) write in flowing analytical prose, not bullet spam. Write 100–180 words, using the shortest length that covers distinct assigned claims; do not restate the executive summary or facts better carried by the quantitative/scenario tables.`,
 );
 
 export function sectionPrompt(
@@ -492,7 +492,7 @@ Write the section now (markdown, no top-level # heading — start at ##).`;
 // ── Phase 7c: executive summary ──────────────────────────────────────────
 export const EXEC_SUMMARY_SYSTEM = controlPlane(
 	"exec_summary",
-	`Your sole directive is to write the executive summary AFTER all sections exist. Synthesize the decision-relevant bottom line: the answer, the strongest evidence, the biggest uncertainty, and the recommendation. 250–450 words, no citations beyond [n] tokens already used, no new facts.`,
+	`Your sole directive is to write the executive summary AFTER all sections exist. Synthesize only the decision-relevant bottom line: the answer, the strongest evidence, the biggest uncertainty, and the recommendation. 80–140 words, no section-by-section preview, no citations beyond [n] tokens already used, no new facts.`,
 );
 
 export function execSummaryPrompt(spec: Spec, sectionTitles: string[], topicSyntheses: string): string {
