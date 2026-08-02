@@ -321,7 +321,7 @@ export const ENTAIL_TOOL = {
 // ── Phase 6c: quantitative normalization (§18) ───────────────────────────
 export const NUMERIC_SYSTEM = controlPlane(
 	"normalize",
-	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Within each subject/metric/cost-basis group, keep the newest non-superseded estimate that matches <current_as_of> and <time_horizon>; retain older rows only to establish a trajectory or material basis mismatch. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
+	`Your sole directive is to normalize the numeric claims into a comparison table. Convert to common units only where conversions are exact and unambiguous (e.g., CAD→USD only if the source states the rate; years noted, never silently inflated). NEVER invent conversions or figures. Group by metric. Within each subject/metric/cost-basis group, keep the newest non-superseded estimate that matches <current_as_of> and <time_horizon>; retain older rows only to establish a trajectory or material basis mismatch. Return at most 12 rows total, prioritizing the objective's central metric and retaining secondary metrics only when they materially affect the decision. Mark incomparable rows explicitly (different bases, vintages, scopes) rather than forcing false equivalence.`,
 );
 
 export function numericPrompt(spec: Spec, valueClaims: string): string {
@@ -350,6 +350,7 @@ export const NUMERIC_TOOL = {
 				citation: Type.Integer({ description: "source number [n]" }),
 				comparable: Type.Boolean({ description: "false when bases/vintages/scopes differ materially" }),
 			}),
+			{ maxItems: 12 },
 		),
 	}),
 };
