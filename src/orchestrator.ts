@@ -1029,7 +1029,7 @@ function claimPairKey(a: string, b: string): string {
 	return a < b ? `${a}:${b}` : `${b}:${a}`;
 }
 
-/** Relation-check pairs: independent families, lexical proximity, then confidence. */
+/** Relation-check pairs: independent families, uncorroborated endpoints, lexical proximity, then confidence. */
 function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Claim]> {
 	const familyBySource = new Map(
 		sources.map((source) => [
@@ -1037,7 +1037,7 @@ function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Clai
 			source.source_family ?? detectSourceFamily(source.url, source.publisher ?? ""),
 		]),
 	);
-	const pairs: Array<[Claim, Claim, boolean, number, number]> = [];
+	const pairs: Array<[Claim, Claim, boolean, number, number, number]> = [];
 	for (let i = 0; i < claims.length; i++) {
 		for (let j = i + 1; j < claims.length; j++) {
 			const a = claims[i];
@@ -1046,10 +1046,11 @@ function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Clai
 			const familiesB = new Set(b.source_ids.map((id) => familyBySource.get(id)).filter(Boolean));
 			const independent = [...familiesA].some((family) => !familiesB.has(family)) ||
 				[...familiesB].some((family) => !familiesA.has(family));
-			pairs.push([a, b, independent, claimTextSimilarity(a.text, b.text), a.confidence + b.confidence]);
+			const uncorroborated = Number(familiesA.size < 2) + Number(familiesB.size < 2);
+			pairs.push([a, b, independent, uncorroborated, claimTextSimilarity(a.text, b.text), a.confidence + b.confidence]);
 		}
 	}
-	pairs.sort((x, y) => Number(y[2]) - Number(x[2]) || y[3] - x[3] || y[4] - x[4]);
+	pairs.sort((x, y) => Number(y[2]) - Number(x[2]) || y[3] - x[3] || y[4] - x[4] || y[5] - x[5]);
 	return pairs.map(([a, b]) => [a, b]);
 }
 
