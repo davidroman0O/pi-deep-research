@@ -132,7 +132,11 @@ export function runStaticAudits(args: {
 
 	// 1. coverage — every spec dimension appears in report or evidence
 	const hay = (report + " " + evidence.map((e) => e.claim).join(" ")).toLowerCase();
-	const covered = spec.dimensions.filter((d) => hay.includes(d.toLowerCase().split(" ")[0] ?? d.toLowerCase()));
+	const covered = spec.dimensions.filter((dimension) => {
+		const terms = [...new Set(dimension.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [])];
+		const hits = terms.filter((term) => hay.includes(term)).length;
+		return terms.length > 0 && (hay.includes(terms[0]) || hits >= Math.min(terms.length, Math.max(2, Math.ceil(terms.length / 3))));
+	});
 	const uncovered = spec.dimensions.filter((d) => !covered.includes(d));
 
 	// 2. claim audit — every claim has at least one supporting evidence
