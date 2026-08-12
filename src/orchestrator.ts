@@ -667,8 +667,9 @@ async function synthesizeReport(
 	const valueClaims = numericEvidence
 		.map((e) => {
 			const srcNum = sources.findIndex((s) => s.id === e.source_id) + 1;
+			const srcDate = sources[srcNum - 1]?.date ?? "unknown";
 			const vals = e.values && Object.keys(e.values).length > 0 ? JSON.stringify(e.values) : "(in claim text)";
-			return `- ${e.claim} | values: ${vals} | conditions: ${e.conditions ?? "none"} | source [${srcNum}]`;
+			return `- ${e.claim} | values: ${vals} | conditions: ${e.conditions ?? "none"} | date: ${srcDate} | source [${srcNum}]`;
 		})
 		.join("\n");
 	let numericSection = "";
@@ -711,10 +712,7 @@ async function synthesizeReport(
 		const body = sc.scenarios
 			.map((s) => `| ${s.name} | ${s.assumption} | ${years.map((y) => s.projections.find((p) => p.year === y)?.value ?? "—").join(" | ")} |`)
 			.join("\n");
-		// Render the projections as a mermaid line chart too — DR-heavy ships a
-		// projected-trajectory figure; tables alone don't show the shape.
-		const chart = renderScenarioChart(sc.metric, years, sc.scenarios);
-		scenarioSection = `\n\n## Scenario Model: ${sc.metric}\n\n**Base estimate:** ${sc.base_value}\n\n${header}\n${body}\n\n${chart}\n`;
+		scenarioSection = `\n\n## Scenario Model: ${sc.metric}\n\n**Base estimate:** ${sc.base_value}\n\n${header}\n${body}\n`;
 	}
 
 	// ── Phase 7: sectioned synthesis ───────────────────────────────────
@@ -759,7 +757,9 @@ async function synthesizeReport(
 				.map((c, i) => {
 					const globalIdx = claims.indexOf(c) + 1;
 					const srcNums = c.source_ids.map((sid) => sources.findIndex((s) => s.id === sid) + 1).filter((n) => n > 0);
-					return `C${globalIdx} [${c.status}, conf ${c.confidence.toFixed(2)}] ${c.text} | cite as: ${srcNums.map((n) => `[${n}]`).join(" ")}`;
+					const asOfDates = c.source_ids.map((sid) => sources.find((s) => s.id === sid)?.date).filter(Boolean) as string[];
+					const asOf = asOfDates.length ? ` | as of: ${[...asOfDates].sort().pop()}` : "";
+					return `C${globalIdx} [${c.status}, conf ${c.confidence.toFixed(2)}] ${c.text}${asOf} | cite as: ${srcNums.map((n) => `[${n}]`).join(" ")}`;
 				})
 				.join("\n");
 			const assumptions = sectionClaims
@@ -1055,38 +1055,6 @@ function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Clai
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
-/** Pull the leading number out of a projection value string like "~$5,700/kW" or "6000". */
-function numOf(s: string): number | null {
-	const m = String(s).match(/-?\d[\d,.]*/);
-	if (!m) return null;
-	return Number(m[0].replace(/,/g, ""));
-}
-
-/** Mermaid xychart line chart of scenario projections (DR-heavy-style figure). */
-function renderScenarioChart(
-	metric: string,
-	years: string[],
-	scenarios: Array<{ name: string; projections: Array<{ year: string; value: string }> }>,
-): string {
-	if (years.length < 2) return "";
-	const series = scenarios.map((s) => ({
-		name: s.name.replace(/[\[\]]/g, "").slice(0, 28),
-		points: years.map((y) => numOf(s.projections.find((p) => p.year === y)?.value ?? "")),
-	}));
-	// bail if nothing numeric to plot
-	if (!series.some((s) => s.points.some((p) => p !== null))) return "";
-	const lines = series.map((s) => `    ${JSON.stringify(s.name).replace(/"/g, "'")} : ${years.map((_, i) => s.points[i] ?? 0).join(", ")}`).join("\n");
-	return [
-		"```mermaid",
-		"xychart-beta line",
-		`	title "${metric.replace(/"/g, "'").slice(0, 60)} — scenario projection"`,
-		`	x-axis [${years.map((y) => JSON.stringify(y).replace(/"/g, "'")).join(", ")}]`,
-		"	y-axis \"value\" 0 --> " + (Math.max(...series.flatMap((s) => s.points.filter((p): p is number => p !== null)), 1000) * 1.15).toFixed(0),
-		lines,
-		"```",
-	].join("\n");
-}
-
 /** Remove leading markdown heading lines from a draft (the assembler imposes canonical ones). */
 function stripLeadingHeadings(text: string): string {
 	return text.replace(/^(?:#{1,4}\s+[^\n]*\n+)+/, "");
