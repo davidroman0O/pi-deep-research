@@ -22,6 +22,10 @@ export interface DrConfig {
 	scrapegraphApiKey?: string;
 	/** When false, use only no-cost backends regardless of keys. */
 	allowPaidBackends?: boolean;
+	/** Model for dr_research candidate runs (e.g. "deepseek/deepseek-v4-flash-0731"). */
+	candidateModel?: string;
+	/** Model for the autoresearch optimizer agent. If unset, uses session default. */
+	optimizerModel?: string;
 }
 
 const CONFIG_FILE = join(getAgentDir(), "pi-deep-research.json");

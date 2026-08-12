@@ -24,12 +24,14 @@ import { slugify, ensureTopicDir, saveReport, saveJson, appendLog } from "../lib
 import { proxyScores, formatMetrics } from "../lib/metrics.ts";
 import { RUBRIC_WEIGHTS, DEFAULT_THRESHOLD } from "../lib/types.ts";
 import { compositeFromScores } from "../gate/verdict.ts";
+import { getConfig } from "../../src/config.ts";
 import type { TestConfig } from "../lib/types.ts";
 
+const drConfig = await getConfig();
 const config: TestConfig = {
 	topic: process.env.TOPIC ?? "What is the current capital cost per kW of small modular reactors?",
 	profile: "benchmark",
-	model: process.env.MODEL,
+	model: process.env.MODEL ?? drConfig.candidateModel,
 };
 
 async function main() {

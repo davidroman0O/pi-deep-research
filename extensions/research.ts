@@ -221,7 +221,7 @@ export default function (pi: ExtensionAPI) {
 
 				const mainChoice = await ctx.ui.select(
 					`Deep Research — search:[${searchStatus}]  scrape:[${scrapeStatus}]`,
-					["Search backends…", "Scrape backends…", "API keys…", "List runs", "Done"]
+					["Search backends…", "Scrape backends…", "API keys…", "Model…", "List runs", "Done"]
 				);
 				if (!mainChoice || mainChoice === "Done") { inMenu = false; continue; }
 
@@ -320,6 +320,33 @@ export default function (pi: ExtensionAPI) {
 						} else if (sel.startsWith("Tavily")) {
 							const val = await ctx.ui.input("Tavily API key", "Enter key or empty to clear");
 							await saveConfig({ tavilyApiKey: val || "" } as DrConfig);
+						}
+					}
+				}
+
+				if (mainChoice === "Model…") {
+					let inModel = true;
+					while (inModel) {
+						const c = await getConfig();
+						const cand = c.candidateModel ?? "(session default)";
+						const opt = c.optimizerModel ?? "(session default)";
+						const opts = [
+							`Candidate: ${cand}`,
+							`Optimizer:  ${opt}`,
+							"Use session default for both",
+							"Back",
+						];
+						const sel = await ctx.ui.select("Model configuration", opts);
+						if (!sel || sel === "Back") { inModel = false; continue; }
+						if (sel.startsWith("Candidate")) {
+							const val = await ctx.ui.input("Candidate model", "e.g. deepseek/deepseek-v4-flash-0731 (empty = session default)");
+							await saveConfig({ candidateModel: val || undefined } as DrConfig);
+						} else if (sel.startsWith("Optimizer")) {
+							const val = await ctx.ui.input("Optimizer model", "e.g. deepseek/deepseek-v4-flash-0731 (empty = session default)");
+							await saveConfig({ optimizerModel: val || undefined } as DrConfig);
+						} else if (sel === "Use session default for both") {
+							await saveConfig({ candidateModel: undefined, optimizerModel: undefined } as DrConfig);
+							ctx.ui.notify("Reset to session default.", "info");
 						}
 					}
 				}
