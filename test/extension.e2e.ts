@@ -6,7 +6,7 @@
 //
 // Per DRH guidance: two test layers, this is the agent-loop one.
 //
-//   MODEL_REF="openai-codex/gpt-5.5" bun test/extension.e2e.ts
+//   MODEL_REF="deepseek/deepseek-v4-flash-0731" bun test/extension.e2e.ts
 
 import {
 	createAgentSession,

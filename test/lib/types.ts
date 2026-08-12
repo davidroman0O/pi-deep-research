@@ -77,7 +77,7 @@ export interface Verdict {
 export interface TestConfig {
 	topic: string;
 	profile: "quick" | "standard" | "deep" | "heavy" | "ultra";
-	model?: string; // candidate model, e.g. "openai-codex/gpt-5.5"
+	model?: string; // candidate model, e.g. "deepseek/deepseek-v4-flash-0731"
 	ttl_days?: number; // reference cache TTL (§3.2)
 	expected_dimensions?: string[];
 }

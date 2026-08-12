@@ -160,7 +160,7 @@ const drOptimize = {
     // Phase 1: BASELINE MEASURE
     context.phase("baseline-measure");
     const baselineRes = await context.shell(
-      'TOPIC="' + topic + '" MODEL="openai-codex/gpt-5.5" bun test/suites/autoresearch-measure.ts',
+      'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" bun test/suites/autoresearch-measure.ts',
       { timeoutMs: 7200000 }
     );
     const baselineMetrics = parseMetrics(baselineRes.stdout);
@@ -170,12 +170,12 @@ const drOptimize = {
     // Phase 2-N: PATCH ATTEMPTS
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       context.phase("patch-attempt-" + attempt);
-      context.log("Launching optimizer (gpt-5.6-sol, max thinking)...");
+      context.log("Launching optimizer (deepseek-v4-flash)...");
 
       const patchResult = await context.agent(buildOptimizerPrompt(baselineMetrics), {
         label: "optimizer-attempt-" + attempt,
-        model: "openai-codex/gpt-5.6-sol",
-        thinking: "max",
+        model: "deepseek/deepseek-v4-flash-0731",
+        thinking: "xhigh",
         goalInject: "Read ALL 19 files in src/ (orchestrator, controller, coverage, policy, prompts, prompts-policy, metrics, claimgraph, audits, novel, trust, quality, store, search, ingest, passage, llm, config, parallel). Analyze the weakest metric — find the ROOT CAUSE in the code. Propose ONE targeted fix as a unified diff using TABS for indentation. CONSTRAINTS: NEVER run git checkout/reset/stash/clean — these destroy uncommitted work from previous iterations. Only use git apply. Do NOT break TypeScript compilation. Do NOT change the search ingestion loop. Return JSON: {diff, rationale, files_read}.",
         outputSchema: {
           type: "object",
@@ -227,7 +227,7 @@ const drOptimize = {
 
       // Run measure with patch applied
       const measureRes = await context.shell(
-        'TOPIC="' + topic + '" MODEL="openai-codex/gpt-5.5" bun test/suites/autoresearch-measure.ts',
+        'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" bun test/suites/autoresearch-measure.ts',
         { timeoutMs: 7200000 }
       );
       const newMetrics = parseMetrics(measureRes.stdout);
@@ -342,7 +342,7 @@ const drJudge = {
     // Phase 1: CANDIDATE
     context.phase("candidate");
     context.log("Running candidate (dr_research)...");
-    await context.shell('TOPIC="' + topic + '" MODEL="openai-codex/gpt-5.5" bun test/suites/smoke.ts', { timeoutMs: 7200000 });
+    await context.shell('TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" bun test/suites/smoke.ts', { timeoutMs: 7200000 });
     const reportRes = await context.shell("cat test/results/" + slug + "/ours_report.md", { timeoutMs: 5000 });
     const oursReport = reportRes.stdout;
     if (!oursReport || oursReport.length < 100) throw new Error("Candidate report missing");
@@ -380,12 +380,12 @@ const drJudge = {
 
     const jurorResults = await context.parallel("juror", {
       run1: () => context.agent(jurorPrompt(topic, reportA, reportB), {
-        label: "juror-run-1", model: "openai-codex/gpt-5.6-sol", thinking: "max",
+        label: "juror-run-1", model: "deepseek/deepseek-v4-flash-0731", thinking: "xhigh",
         goalInject: "Score two research reports on 9 criteria (1-5 scale). Score based on EVIDENCE not eloquence. Use the FULL range — do not default to 3. Return JSON via submit_evaluation tool.",
         outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: null,
       }),
       run2: () => context.agent(jurorPrompt(topic, reportB, reportA), {
-        label: "juror-run-2", model: "openai-codex/gpt-5.6-sol", thinking: "max",
+        label: "juror-run-2", model: "deepseek/deepseek-v4-flash-0731", thinking: "xhigh",
         goalInject: "Score two research reports on 9 criteria (1-5 scale). Score based on EVIDENCE not eloquence. Use the FULL range — do not default to 3. Return JSON via submit_evaluation tool.",
         outputSchema: JUROR_OUTPUT_SCHEMA, timeoutMs: null,
       }),
