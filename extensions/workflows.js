@@ -473,6 +473,55 @@ const drWorkflowExtension = {
         };
       },
     },
+    // Override the model for optimizer/candidate agents.
+    // Reads optimizerModel from ~/.pi/agent/pi-deep-research.json and
+    // forces it via transport interception at session creation time.
+    // This lets the user configure a different model than the session default.
+    modelOverride: {
+      priority: 15, // run before goalInjector so goal injection sees the right session
+      setup(agent, context) {
+        if (context.signal.aborted) return;
+
+        // Read model from config file synchronously
+        let targetModel = null;
+        try {
+          const { readFileSync, existsSync } = require("fs");
+          const { getAgentDir } = require("@earendil-works/pi-coding-agent");
+          const { join } = require("path");
+          const cfgPath = join(getAgentDir(), "pi-deep-research.json");
+          if (existsSync(cfgPath)) {
+            const cfg = JSON.parse(readFileSync(cfgPath, "utf8"));
+            targetModel = cfg.optimizerModel || cfg.candidateModel || null;
+          }
+        } catch (e) { /* config not available — use session default */ }
+        if (!targetModel) return;
+
+        // Parse "provider/model-id" format
+        const slashIdx = targetModel.indexOf("/");
+        if (slashIdx < 1) return;
+        const provider = targetModel.slice(0, slashIdx);
+        const modelId = targetModel.slice(slashIdx + 1);
+        if (!provider || !modelId) return;
+
+        // Wrap the transport to override model at session creation
+        const originalTransport = agent.transport;
+        agent.transport = {
+          id: "model-override",
+          async createSession(prepared, ctx) {
+            const overridden = {
+              ...prepared,
+              model: {
+                provider,
+                id: modelId,
+                // preserve thinking level from the original prepared model
+                ...(prepared.model?.thinking !== undefined ? { thinking: prepared.model.thinking } : {}),
+              },
+            };
+            return originalTransport.createSession(overridden, ctx);
+          },
+        };
+      },
+    },
   },
 };
 
