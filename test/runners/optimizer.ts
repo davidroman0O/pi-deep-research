@@ -110,5 +110,18 @@ const out = parsed ?? {
 	files_read: [],
 };
 
+// Write the diff to __opt.patch in the current working directory so the
+// workflow can apply it directly with git apply (no shell heredoc, which
+// blocks on stdin in the workflow shell() helper).
+const diffText = (out.diff ?? "").trim();
+if (diffText) {
+	try {
+		const { writeFileSync } = await import("node:fs");
+		writeFileSync(join(process.cwd(), "__opt.patch"), diffText + "\n", "utf8");
+	} catch (e) {
+		console.error("failed to write __opt.patch: " + (e as Error).message);
+	}
+}
+
 console.log(JSON.stringify({ diff: out.diff ?? "", rationale: out.rationale ?? "", files_read: out.files_read ?? [] }));
 process.exit(0);
