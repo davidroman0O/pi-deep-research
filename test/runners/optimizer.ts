@@ -10,8 +10,7 @@
 //
 // Usage:  OPTIMIZER_PROMPT_FILE=/tmp/opt-prompt.txt bun test/runners/optimizer.ts [--model provider/model-id]
 
-import { readFile, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
 	createAgentSession,
@@ -47,7 +46,12 @@ if (!model) {
 }
 console.error(`optimizer model: ${model.provider}/${model.id}`);
 
-const cwd = await mkdtemp(join(tmpdir(), "dr-opt-"));
+// The session must run with the repo root as cwd so the optimizer agent can
+// actually read src/ and produce diffs that apply. The workflow invokes this
+// runner from the repo root, so process.cwd() is the repo. (candidate.ts uses
+// a temp sandbox, but the optimizer needs real source access to generate
+// valid, applying patches.)
+const cwd = process.cwd();
 const { session } = await createAgentSession({
 	cwd,
 	modelRuntime: runtime,
