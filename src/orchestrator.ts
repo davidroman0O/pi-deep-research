@@ -774,7 +774,10 @@ async function synthesizeReport(
 		const dimKey = dim.toLowerCase().split(" ")[0]?.slice(0, 10) ?? dim.toLowerCase();
 		const dimPrefix = dim.toLowerCase().slice(0, 8);
 		const dimClaims = claims.filter((c) => {
-			if (!c.citation_ready) return false;
+			// Ledger decoupled from the citation gate: weak-sourced claims stay
+			// recorded (fact_recall + traceability) but are never cited into
+			// prose — only claims with backing evidence qualify for rows.
+			if (c.supporting_evidence.length === 0) return false;
 			const text = (c.text + " " + c.evidence_ids.map((eid) => evidenceById.get(eid)?.conditions ?? "").join(" ")).toLowerCase();
 			return text.includes(dimKey) || text.includes(dimPrefix);
 		});

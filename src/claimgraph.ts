@@ -215,6 +215,14 @@ export function buildClaim(id: string, cluster: Evidence[], sources: Source[]): 
 		const s = sources.find((x) => x.id === e.source_id);
 		return s ? qualityToScore(s.quality) : 0.5;
 	});
+	// Citation gate (§10/§19): citable only when ≥1 backing source carries a
+	// real quality label (high/medium). Claims backed solely by low/unassessed
+	// sources keep status + confidence and stay in the appendix ledger, but
+	// never reach section prose (drafters and the repair loop skip them).
+	const backedByQualitySource = [...sourceIds].some((sid) => {
+		const s = sources.find((x) => x.id === sid);
+		return !!s && (s.quality === "high" || s.quality === "medium");
+	});
 	const { confidence, label } = estimateConfidence({
 		independentSources: sourceIds.size,
 		meanSourceQuality: avg(qualities),
@@ -232,7 +240,7 @@ export function buildClaim(id: string, cluster: Evidence[], sources: Source[]): 
 		contradicting_evidence: contradicting.map((e) => e.id),
 		assumptions: unique(cluster.map((e) => e.conditions).filter(Boolean) as string[]).slice(0, 5),
 		confidence,
-		citation_ready: confidence >= 0.4 && supporting.length >= 1,
+		citation_ready: confidence >= 0.4 && supporting.length >= 1 && backedByQualitySource,
 		evidence_ids: cluster.map((e) => e.id),
 		source_ids: [...sourceIds],
 	};

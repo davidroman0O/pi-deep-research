@@ -1,16 +1,16 @@
 {
   "scores": {
-    "citation_integrity": 5,
+    "citation_integrity": 4.5,
     "coverage": 5,
     "source_quality": 4,
     "contradiction_handling": 4,
-    "factual_accuracy": 3.851851851851852,
-    "analytical_depth": 3.7483330367335324,
-    "timeliness": 2.288135593220339,
-    "structure_actionability": 5,
-    "conciseness": 2.706161137440758
+    "factual_accuracy": 3.986813186813187,
+    "analytical_depth": 4.257068586817104,
+    "timeliness": 3.2745098039215685,
+    "structure_actionability": 4.75,
+    "conciseness": 4.22130898021309
   },
-  "composite": 4.207501858740102,
+  "composite": 4.272507005910226,
   "passed": true,
   "hardGateViolations": []
 }
