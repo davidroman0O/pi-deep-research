@@ -160,7 +160,7 @@ const drOptimize = {
     // Phase 1: BASELINE MEASURE
     context.phase("baseline-measure");
     const baselineRes = await context.shell(
-      'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" bun test/suites/autoresearch-measure.ts',
+      'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" DR_MAX_WALLCLOCK_MS=2700000 bun test/suites/autoresearch-measure.ts',
       { timeoutMs: 7200000 }
     );
     const baselineMetrics = parseMetrics(baselineRes.stdout);
@@ -227,7 +227,7 @@ const drOptimize = {
 
       // Run measure with patch applied
       const measureRes = await context.shell(
-        'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" bun test/suites/autoresearch-measure.ts',
+        'TOPIC="' + topic + '" MODEL="deepseek/deepseek-v4-flash-0731" DR_MAX_WALLCLOCK_MS=2700000 bun test/suites/autoresearch-measure.ts',
         { timeoutMs: 7200000 }
       );
       const newMetrics = parseMetrics(measureRes.stdout);
@@ -358,12 +358,14 @@ const drJudge = {
     } else {
       context.log("Generating DRH reference via gpt_chat...");
       const refResult = await context.agent(
-        'Call gpt_chat with chat_type: "deep_research_heavy" to research: "' + topic + '". Return the full report text.',
+        'Call gpt_chat with chat_type: "deep_research_heavy", model: "gpt-6-astra-wm" and thinking_effort: "max" (highest reasoning) to research: "' + topic + '". Return the full report text.',
         { label: "drh-reference", tools: ["gpt_chat"], timeoutMs: null,
           outputSchema: { type: "object", properties: { report: { type: "string" } }, required: ["report"], additionalProperties: false } }
       );
       drhReport = refResult?.report ?? "";
       await context.shell("mkdir -p test/results/" + slug + " && cat > test/results/" + slug + "/drh_report.md << 'REF_EOF'\n" + drhReport + "\nREF_EOF", { timeoutMs: 10000 });
+      // conservation: DRH provenance (TTL cache + audit trail)
+      await context.shell("cat > test/results/" + slug + "/drh_meta.json << 'M_EOF'\n" + JSON.stringify({ timestamp: new Date().toISOString(), model: "gpt-6-astra-wm", thinking_effort: "max", words: drhReport.split(/\s+/).length }, null, 2) + "\nM_EOF", { timeoutMs: 5000 });
       context.log("Saved DRH: " + drhReport.split(/\s+/).length + " words");
     }
 

@@ -1,0 +1,66 @@
+{
+  "scores": [
+    {
+      "criterion": "factual_accuracy",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A mostly accurate but weaker scope handling; B preserves OCC/all-in/programme distinctions and avoids overclaiming"
+    },
+    {
+      "criterion": "citation_integrity",
+      "score_a": 3,
+      "score_b": 4,
+      "justification": "A has weak/mismatched sources (Wikipedia for X-energy) and under-supported derived assertions; B maps better though secondary-dependent"
+    },
+    {
+      "criterion": "source_quality",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A mixes lower-quality references; B prioritizes government/utility/vendor/institutional hierarchy"
+    },
+    {
+      "criterion": "coverage",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A covers main designs + FOAK/NOAK but leaves areas incomplete (normalization unfinished); B broader vendor coverage, definitions, cost classes, financing"
+    },
+    {
+      "criterion": "contradiction_handling",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A highlights scope differences but occasionally blends scenarios; B treats disagreements as scope differences"
+    },
+    {
+      "criterion": "analytical_depth",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A useful learning-curve/scenario analysis; B stronger synthesis on financing, FOAK non-recurring costs, investment implications"
+    },
+    {
+      "criterion": "timeliness",
+      "score_a": 4,
+      "score_b": 5,
+      "justification": "A recent and 2026-targeted with weaker chains; B more comprehensively incorporates current programmes"
+    },
+    {
+      "criterion": "structure_actionability",
+      "score_a": 5,
+      "score_b": 5,
+      "justification": "A strong exec summary/tables/procurement framing; B equally strong with clearer decision categories"
+    },
+    {
+      "criterion": "conciseness",
+      "score_a": 2,
+      "score_b": 3,
+      "justification": "A very repetitive with unfinished sections; B long but repetition better controlled"
+    }
+  ],
+  "composite_a": 3.75,
+  "composite_b": 4.7,
+  "preference": "B",
+  "confidence": "high",
+  "key_strengths_a": [],
+  "key_weaknesses_a": [],
+  "key_strengths_b": [],
+  "key_weaknesses_b": []
+}

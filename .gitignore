@@ -5,6 +5,7 @@ node_modules
 logs/
 .pi-subagents/
 docs/internals
-test/results/
 docs/internals/**
 test/results/threshold-history.json
+.pi/fabric/
+.pi/.pi-rules/

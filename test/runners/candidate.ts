@@ -7,13 +7,61 @@
 // extension loading → tool discovery → agent interaction → tool execution
 // → artifact persistence → metric extraction.
 
-import { readFile } from "node:fs/promises";
+import { readFile, mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { runResearch } from "../../src/orchestrator.ts";
+import { PROFILES } from "../../src/store.ts";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
 import { createCandidateSession, collectEvents } from "../lib/session.ts";
 import { computeRunMetrics } from "../lib/metrics.ts";
 import type { TestConfig, CandidateResult } from "../lib/types.ts";
+
+/**
+// Run the candidate DIRECTLY through runResearch() — same pipeline, zero mocks,
+// no agent session. Used by the autoresearch measure loop: a full agent turn
+// holds one provider connection open, and gateways cut connections at ~30 min,
+// which aborted long benchmark runs. The session-based runCandidate() remains
+// for judge/smoke suites that must exercise the full extension stack.
+ */
+export async function runCandidateDirect(config: TestConfig): Promise<CandidateResult> {
+	console.log(`  candidate model (direct): ${config.model ?? "default"}`);
+
+	const cwd = await mkdtemp(join(tmpdir(), "dr-direct-"));
+	const runtime = await ModelRuntime.create();
+	const available = await runtime.getAvailable();
+	const model = config.model
+		? available.find((m) => `${m.provider}/${m.id}` === config.model) ?? available[0]
+		: available[0];
+	if (!model) throw new Error("No models available in runtime");
+
+	const result = await runResearch(config.topic, {
+		cwd,
+		handle: {
+			model,
+			getAuth: async (providerId: string) => {
+				const res = await runtime.getAuth(providerId);
+				if (!res) return null;
+				return { apiKey: res.auth.apiKey, headers: res.auth.headers, baseUrl: res.auth.baseUrl, env: res.env };
+			},
+		},
+		config: { ...(PROFILES[config.profile ?? "benchmark"] ?? {}) },
+		onProgress: (line) => console.log(`  ▸ ${line}`),
+	});
+
+	const reportPath = join(cwd, ".pi", "research", result.runId, "report.md");
+	if (!existsSync(reportPath)) throw new Error(`report.md not found at ${reportPath}`);
+	const report = await readFile(reportPath, "utf8");
+	const metrics = await computeRunMetrics(cwd);
+	const wordCount = report.split(/\s+/).length;
+
+	console.log(`  ✓ report: ${wordCount} words`);
+	if (metrics) console.log(`  ✓ metrics: ${metrics.sources} sources, ${metrics.claims} claims`);
+
+	return { report, runDir: join(cwd, ".pi", "research", result.runId), metrics, wordCount };
+}
 
 /**
 // Run the candidate (our dr_research) on a topic via a real Pi session.

@@ -19,9 +19,18 @@
 //   bun test/suites/autoresearch-measure.ts               # default topic
 //   TOPIC="..." MODEL="..." bun test/suites/autoresearch-measure.ts
 
-import { runCandidate } from "../runners/candidate.ts";
+import { runCandidateDirect } from "../runners/candidate.ts";
 import { slugify, ensureTopicDir, saveReport, saveJson, appendLog } from "../lib/artifacts.ts";
-import { proxyScores, formatMetrics } from "../lib/metrics.ts";
+import { proxyScores, formatMetrics, referenceSignals } from "../lib/metrics.ts";
+import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+
+/** Load the stored DRH reference for this topic, if one has been conserved. */
+async function loadReference(): Promise<string | null> {
+	const path = `test/results/${slugify(config.topic)}/drh_report.md`;
+	if (!existsSync(path)) return null;
+	return readFile(path, "utf8");
+}
 import { RUBRIC_WEIGHTS, DEFAULT_THRESHOLD } from "../lib/types.ts";
 import { compositeFromScores } from "../gate/verdict.ts";
 import { getConfig } from "../../src/config.ts";
@@ -30,7 +39,9 @@ import type { TestConfig } from "../lib/types.ts";
 const drConfig = await getConfig();
 const config: TestConfig = {
 	topic: process.env.TOPIC ?? "What is the current capital cost per kW of small modular reactors?",
-	profile: "benchmark",
+	// standard = the DRH-comparable artifact (reverse-engineering deep_research_heavy).
+	// DR_MEASURE_PROFILE=benchmark keeps the cheap fast loop for quick sanity checks.
+	profile: (process.env.DR_MEASURE_PROFILE as TestConfig["profile"]) ?? "standard",
 	model: process.env.MODEL ?? drConfig.candidateModel,
 };
 
@@ -40,7 +51,7 @@ async function main() {
 	console.log(`profile: ${config.profile}\n`);
 
 	// ── candidate run ──────────────────────────────────────────────────
-	const result = await runCandidate(config);
+	const result = await runCandidateDirect(config);
 
 	if (!result.metrics) {
 		console.error("❌ No metrics computed — run artifacts missing");
@@ -50,7 +61,9 @@ async function main() {
 	console.log(`  metrics: ${formatMetrics(result.metrics)}`);
 
 	// ── proxy scores from deterministic metrics ────────────────────────
-	const scores = proxyScores(result.metrics, result.report);
+	const drhReport = await loadReference();
+	if (drhReport) console.log(`  reference: drh_report.md loaded (${drhReport.split(/\s+/).length} words)`);
+	const scores = proxyScores(result.metrics, result.report, drhReport ?? undefined);
 	const composite = compositeFromScores(scores, RUBRIC_WEIGHTS);
 
 	// ── hard gates (§9.2) ──────────────────────────────────────────────
@@ -79,6 +92,11 @@ async function main() {
 	// Proxy-scoreable criteria (all 9 now have deterministic proxies)
 	for (const [criterion, score] of Object.entries(scores)) {
 		console.log(`METRIC ${criterion}=${score}`);
+	}
+	if (drhReport) {
+		const { factRecallVsReference, depthRatioVsReference } = referenceSignals(result.report, drhReport);
+		console.log(`METRIC fact_recall=${factRecallVsReference.toFixed(4)}`);
+		console.log(`METRIC depth_ratio=${depthRatioVsReference.toFixed(4)}`);
 	}
 	// Raw deterministic metrics
 	console.log(`METRIC sources=${result.metrics.sources}`);

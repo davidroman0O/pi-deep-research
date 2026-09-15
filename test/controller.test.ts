@@ -58,6 +58,15 @@ test("search cap still permits claim verification", () => {
 	expect(guardAction({ type: "search", taskId: task.id }, task, budget).type).toBe("summarize");
 });
 
+test("wallclock slice coerces a long-running task to summarize", () => {
+	const budget = createBudget({ max_sources: 10, max_iterations: 4 });
+	expect(guardAction({ type: "verify", taskId: task.id }, task, budget, Date.now() + 60_000).type).toBe("verify");
+	const sliced = guardAction({ type: "verify", taskId: task.id }, task, budget, Date.now() - 1);
+	expect(sliced.type).toBe("summarize");
+	expect(sliced.coerced).toBe(true);
+	expect(sliced.reason).toBe("task wallclock slice exceeded");
+});
+
 test("verification targets are unique uncorroborated proposition clusters", () => {
 	const targetSources: Source[] = [
 		{ ...sources[0], id: "s1", source_family: "family-a" },

@@ -1,0 +1,69 @@
+{
+  "pass": false,
+  "ours_composite": 3.5000000000000004,
+  "drh_composite": 4.775,
+  "ratio": 0.7329842931937173,
+  "critical_failures": [],
+  "preference_runs": [
+    "drh",
+    "drh"
+  ],
+  "per_criterion": [
+    {
+      "criterion": "factual_accuracy",
+      "ours": 3.5,
+      "drh": 5,
+      "gap": 1.5
+    },
+    {
+      "criterion": "citation_integrity",
+      "ours": 3,
+      "drh": 4.5,
+      "gap": 1.5
+    },
+    {
+      "criterion": "source_quality",
+      "ours": 3.5,
+      "drh": 5,
+      "gap": 1.5
+    },
+    {
+      "criterion": "coverage",
+      "ours": 3.5,
+      "drh": 5,
+      "gap": 1.5
+    },
+    {
+      "criterion": "contradiction_handling",
+      "ours": 3.5,
+      "drh": 5,
+      "gap": 1.5
+    },
+    {
+      "criterion": "analytical_depth",
+      "ours": 4,
+      "drh": 5,
+      "gap": 1
+    },
+    {
+      "criterion": "timeliness",
+      "ours": 4.5,
+      "drh": 5,
+      "gap": 0.5
+    },
+    {
+      "criterion": "structure_actionability",
+      "ours": 4.5,
+      "drh": 5,
+      "gap": 0.5
+    },
+    {
+      "criterion": "conciseness",
+      "ours": 3,
+      "drh": 2.5,
+      "gap": -0.5
+    }
+  ],
+  "rationale": "DRH strongly preferred in both runs (high confidence); composite ratio 0.73 < 0.8",
+  "timestamp": "2026-09-15T05:57:37.367Z"
+}

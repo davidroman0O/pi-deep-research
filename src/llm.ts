@@ -113,8 +113,11 @@ export async function llmJson<T = unknown>(
 			await backoff(attempt, opts.signal);
 			continue;
 		}
-		if (msg.stopReason !== "error") break;
-		lastErr = (msg as { errorMessage?: string }).errorMessage ?? "";
+		// "aborted" is a provider-side cancellation (timeout/hiccup), not our signal —
+		// checkAbort above covers real caller aborts. "length" means the model rambled
+		// past the token cap mid-tool-call; a retry usually lands inside the budget.
+		if (msg.stopReason !== "error" && msg.stopReason !== "aborted" && msg.stopReason !== "length") break;
+		lastErr = (msg as { errorMessage?: string }).errorMessage ?? `stopReason=${msg.stopReason}`;
 		await backoff(attempt, opts.signal);
 	}
 	if (!msg) throw new Error(`Provider ${model.provider} failed after ${MAX_CALL_ATTEMPTS} attempts: ${lastErr}`);
@@ -125,7 +128,35 @@ export async function llmJson<T = unknown>(
 			`Provider ${model.provider} returned no tool call for '${tool.name}' (stopReason=${msg.stopReason}${lastErr ? `, ${lastErr.slice(0, 120)}` : ""}). The tool schema is the contract — nothing to parse.`,
 		);
 	}
-	return toolCall.arguments as T;
+	return sanitizeArrays(toolCall.arguments, (tool as { parameters?: { properties?: Record<string, { type?: string; items?: { properties?: Record<string, { type?: string }> } }> } }).parameters) as T;
+}
+
+/**
+ * Schema-declared array fields occasionally come back as a bare string (or
+ * junk) from a provider — one memo with `key_findings: "..."` crashed whole
+ * runs downstream. Coerce: lone string -> [string], anything else non-array
+ * -> []. Walks the tool schema top level plus one object-items level, which
+ * covers every harness tool schema.
+ */
+function sanitizeArrays(
+	args: unknown,
+	parameters?: { properties?: Record<string, { type?: string; items?: { properties?: Record<string, { type?: string }> } }> },
+): unknown {
+	if (!args || typeof args !== "object" || !parameters?.properties) return args;
+	const out = { ...(args as Record<string, unknown>) };
+	for (const [key, schema] of Object.entries(parameters.properties)) {
+		const value = out[key];
+		if (schema.type !== "array") {
+			// one level deep: object items with declared array props
+			if (schema.type === "object" && value && typeof value === "object" && !Array.isArray(value) && schema.items?.properties) {
+				out[key] = sanitizeArrays(value, { properties: schema.items.properties as never });
+			}
+			continue;
+		}
+		if (Array.isArray(value)) continue;
+		out[key] = typeof value === "string" && value.trim() ? [value] : [];
+	}
+	return out;
 }
 
 function checkAbort(signal?: AbortSignal) {

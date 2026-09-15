@@ -74,14 +74,41 @@ export function formatMetrics(m: RunMetrics): string {
 /**
 // Map deterministic metrics to approximate rubric-style scores (1-5).
 // Used by the autoresearch fast loop as a cheap proxy for the LLM juror.
-// These are NOT the real juror scores — they're fast heuristics.
 //
-// DRH recommendation: add deterministic proxies for the 4 juror-only criteria
-// (analytical_depth, timeliness, structure_actionability, conciseness) so the
-// optimizer has levers beyond the 5 original proxies. Max composite was 4.0
-// with zeros; now it can reach 5.0.
+// When a DRH reference report is supplied, two reference-relative signals fold
+// into the proxies (reverse-engineering DRH is the goal, so the fast loop must
+// reward fact coverage and depth relative to the reference artifact):
+//   - fact_recall: fraction of the reference's distinctive numeric facts present
+//     in ours (±5% tolerance) → folds into factual_accuracy
+//   - depth_ratio: ours words vs reference words → folds into analytical_depth
  */
-export function proxyScores(m: RunMetrics, report?: string): Record<string, number> {
+/** Fact-recall + depth ratio of ours vs the DRH reference (for METRIC lines + logging). */
+export function referenceSignals(report: string | null, reference: string): { factRecallVsReference: number; depthRatioVsReference: number } {
+	if (!report) return { factRecallVsReference: 0, depthRatioVsReference: 0 };
+	const refFacts = extractReferenceFacts(reference);
+	let found = 0;
+	for (const value of refFacts) if (hasValueNear(report, value)) found++;
+	const factRecallVsReference = refFacts.length > 0 ? found / refFacts.length : 0;
+	const depthRatioVsReference = Math.min(1, report.split(/\s+/).length / Math.max(1, reference.split(/\s+/).length * 0.6));
+	return { factRecallVsReference, depthRatioVsReference };
+}
+
+export function proxyScores(m: RunMetrics, report?: string, reference?: string): Record<string, number> {
+	// ── reference-relative signals (only when a DRH reference exists) ──
+	let factRecall: number | null = null;
+	let depthRatio: number | null = null;
+	if (reference && report) {
+		const refFacts = extractReferenceFacts(reference);
+		if (refFacts.length >= 10) {
+			let found = 0;
+			for (const value of refFacts) if (hasValueNear(report, value)) found++;
+			factRecall = found / refFacts.length;
+		}
+		const refWords = reference.split(/\s+/).length;
+		const ourWords = report.split(/\s+/).length;
+		depthRatio = Math.min(1, ourWords / Math.max(1, refWords * 0.6));
+	}
+
 	return {
 		// citation_integrity: continuous scale (DRH #4: rounding created ±0.3 discontinuities)
 		citation_integrity: Math.max(1, Math.min(5, m.citationPassRate * 5)),
@@ -97,18 +124,25 @@ export function proxyScores(m: RunMetrics, report?: string): Record<string, numb
 		// contradiction_handling: acknowledged = good
 		contradiction_handling: m.contradictionsAcknowledged ? 4 : m.contradictionsDetected > 0 ? 2 : 3,
 
-		// factual_accuracy: proxy via corroboration fraction — continuous scale
-		factual_accuracy: Math.max(1, Math.min(5, 1 + m.corroboratedFraction * 4)),
+		// factual_accuracy: corroboration + (when reference exists) fact recall vs DRH
+		factual_accuracy: factRecall === null
+			? Math.max(1, Math.min(5, 1 + m.corroboratedFraction * 4))
+			: Math.max(1, Math.min(5, 0.5 * (1 + m.corroboratedFraction * 4) + 0.5 * (1 + factRecall * 4))),
 
 		// ── DRH-added deterministic proxies (were always 0) ─────────────
 
-		// analytical_depth: corroborated claims on log scale (deeper = more verified claims)
-		analytical_depth: Math.max(1, Math.min(5, 1 + Math.log2(Math.max(1, m.corroboratedClaims)) * 0.5)),
+		// analytical_depth: corroborated claims + depth vs reference (when supplied)
+		analytical_depth: (() => {
+			const base = 1 + Math.log2(Math.max(1, m.corroboratedClaims)) * 0.5;
+			if (depthRatio === null) return Math.max(1, Math.min(5, base));
+			return Math.max(1, Math.min(5, 0.6 * base + 0.4 * (1 + depthRatio * 4)));
+		})(),
 
-		// timeliness: fraction of recent year references (2024+) in report text
+		// timeliness: recency of year references in the PROSE — reference tables
+		// legitimately cite historical cost vintages and must not dilute the signal.
 		timeliness: (() => {
 			if (!report) return 3;
-			const years = report.match(/20\d{2}/g) ?? [];
+			const years = narrativeOnly(report).match(/20\d{2}/g) ?? [];
 			if (years.length === 0) return 3;
 			const recent = years.filter(y => parseInt(y) >= 2024).length;
 			return Math.max(1, Math.min(5, 1 + (recent / years.length) * 4));
@@ -122,11 +156,15 @@ export function proxyScores(m: RunMetrics, report?: string): Record<string, numb
 			return Math.max(1, Math.min(5, 1 + headings * 0.15 + (hasRec ? 1.5 : 0)));
 		})(),
 
-		// conciseness: penalize redundancy and verbosity, not density (DRH #4: old formula saturated at 1.33%)
+		// conciseness: penalize redundancy and verbosity in the PROSE. Reference
+		// tables (Consolidated Evidence appendix) are dense lookup material, not
+		// prose — excluded from the word count so depth is not punished twice
+		// (their claims already count toward m.claims).
 		conciseness: (() => {
 			if (!report || m.claims === 0) return 3;
-			const words = report.split(/\s+/).length;
-			const claimsPerKword = m.claims / (words / 1000); // claim density per 1000 words
+			const prose = narrativeOnly(report);
+			const words = prose.split(/\s+/).length;
+			const claimsPerKword = m.claims / (words / 1000); // claim density per 1000 prose words
 			// Sweet spot: 30-80 claims per 1000 words. Below 30 = verbose, above 80 = claim-stacking.
 			const densityScore = claimsPerKword < 30 ? 1 + claimsPerKword / 30 * 2
 				: claimsPerKword <= 80 ? 3 + (80 - claimsPerKword) / 50 * 2
@@ -135,3 +173,38 @@ export function proxyScores(m: RunMetrics, report?: string): Record<string, numb
 		})(),
 	};
 }
+
+// ── reference-relative fact extraction (reverse-engineering DRH) ─────────
+
+/** Distinctive numeric facts from the reference: currency/power/percent magnitudes (years excluded). */
+function extractReferenceFacts(reference: string): number[] {
+	const seen = new Set<number>();
+	for (const match of reference.matchAll(/([$€£]|USD\s?|CAD\s?|C\$)?\s?(\d[\d,]*)(?:\.\d+)?\s?(kW\w*|\/kW\w*|\/MWh|MW\b|GW\b|billion|million|bn|%|MWh)?/gi)) {
+		const raw = match[2].replace(/,/g, "");
+		const n = Number(raw);
+		// distinctive magnitudes only: skip years, small counts, page numbers
+		if (Number.isNaN(n) || n < 100 || n > 1e12) continue;
+		if (/^(18|19|20|21)\d{2}$/.test(raw)) continue;
+		seen.add(n);
+		if (seen.size >= 60) break;
+	}
+	return [...seen];
+}
+
+/** Does ours contain this value (±5%)? Guards against reformatting (commas, k/bn scales). */
+function hasValueNear(report: string, value: number): boolean {
+	const normalized = report.replace(/,/g, "");
+	for (const match of normalized.matchAll(/\d+(?:\.\d+)?/g)) {
+		const n = Number(match[0]);
+		if (n > 0 && Math.abs(n - value) / Math.max(value, n) < 0.05) return true;
+	}
+	return false;
+}
+
+
+/** Strip reference-table appendices: proxies judge the narrative, not lookup material. */
+function narrativeOnly(report: string): string {
+	const cut = report.search(/\n## Consolidated Evidence Tables/);
+	return cut >= 0 ? report.slice(0, cut) : report;
+}
+
