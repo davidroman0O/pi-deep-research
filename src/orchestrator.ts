@@ -883,10 +883,23 @@ async function synthesizeReport(
 
 	// Canonical headings: strip whatever heading the drafter chose and impose
 	// the outline's own — guarantees one heading per section, no duplicates.
-	const writtenSections = successes(sectionDrafts).map(({ section, draft }) => ({
-		section,
-		text: `## ${section.title}\n\n${stripLeadingHeadings(draft).trim()}`,
-	}));
+	// Juror finding (run 48): truncated drafts shipped as unfinished sections.
+	// A draft that doesn't end on a sentence boundary gets cut back to its last
+	// complete sentence; a draft too short to carry its assigned claims gets
+	// dropped entirely — never shipped half-written.
+	const writtenSections = successes(sectionDrafts).flatMap(({ section, draft }) => {
+		const trimmed = stripLeadingHeadings(draft).trim();
+		let text = trimmed;
+		if (!/[.!?][\s\"')]*$/.test(trimmed)) {
+			const cut = Math.max(trimmed.lastIndexOf(". "), trimmed.lastIndexOf("! "), trimmed.lastIndexOf("? "));
+			if (cut > 0) text = trimmed.slice(0, cut + 1);
+		}
+		if (text.split(/\s+/).length < 40) {
+			progress(`  ⚠ dropping unfinished section draft: ${section.title}`);
+			return [];
+		}
+		return [{ section, text: `## ${section.title}\n\n${text}` }];
+	});
 	progress("Writing executive summary…");
 	const execSummary = await llmText(
 		handle, EXEC_SUMMARY_SYSTEM,
