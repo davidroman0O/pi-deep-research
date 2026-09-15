@@ -1,0 +1,13 @@
+{
+  "topic": "What is the current cost per cubic meter of seawater desalination, and what drives the remaining gap with conventional water sources?",
+  "expected_dimensions": [
+    "RO energy intensity trends",
+    "capex per m3/day capacity",
+    "large-project benchmarks (Israel, Saudi, Australia)",
+    "brine disposal environmental costs",
+    "renewable-powered desalination",
+    "municipal water price benchmarks"
+  ],
+  "ttl_days": 365,
+  "profile": "standard"
+}

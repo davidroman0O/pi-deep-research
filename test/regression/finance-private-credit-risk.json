@@ -1,0 +1,14 @@
+{
+  "topic": "How large is the private credit market today, where are its real leverage and loss concentrations, and what would a 2008-style rate shock do to it?",
+  "expected_dimensions": [
+    "market size estimates and their definitional conflicts",
+    "BDC / insurer / retirement-fund exposure channels",
+    "PIK income share and marked-vs-cash interest",
+    "default and recovery rates vs leveraged loans",
+    "maturity walls 2025-2028",
+    "systemic contagion channels (banks selling, funds gating)",
+    "rating agency vs academic loss estimates"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

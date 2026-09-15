@@ -1,0 +1,14 @@
+{
+  "topic": "What is the actual capital impact of the Basel III endgame package on US banks by size class, and how did the re-proposal change it?",
+  "expected_dimensions": [
+    "aggregate CET1 increase estimates (Fed vs industry vs GAO)",
+    "RWA inflation from AOCI and operational risk",
+    "GSIB vs regional vs community bank asymmetry",
+    "lending and Treasury-market liquidity consequences",
+    "re-proposal changes and remaining open items",
+    "international divergence vs EU/UK implementation",
+    "litigation and timeline"
+  ],
+  "ttl_days": 180,
+  "profile": "standard"
+}

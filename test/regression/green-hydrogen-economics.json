@@ -1,0 +1,13 @@
+{
+  "topic": "What is the current production cost per kg of green hydrogen, and what would it take to compete with grey hydrogen?",
+  "expected_dimensions": [
+    "electrolyser capex and efficiency",
+    "electricity input costs and capacity factors",
+    "grey hydrogen benchmark and carbon pricing",
+    "storage and transport costs",
+    "policy support and offtake agreements",
+    "global project pipeline and cancellations"
+  ],
+  "ttl_days": 180,
+  "profile": "standard"
+}

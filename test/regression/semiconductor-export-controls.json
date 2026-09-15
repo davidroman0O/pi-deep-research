@@ -1,0 +1,13 @@
+{
+  "topic": "How have US semiconductor export controls affected China's advanced chip manufacturing capability?",
+  "expected_dimensions": [
+    "export control rules and scope",
+    "SMIC and domestic capability milestones",
+    "equipment localization progress",
+    "impact on AI compute access",
+    "ally coordination (Netherlands, Japan, Korea)",
+    "Chinese countermeasures and self-sufficiency funding"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

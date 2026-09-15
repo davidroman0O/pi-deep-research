@@ -1,0 +1,14 @@
+{
+  "topic": "Is US federal debt on a sustainable path — interest costs, buyer composition, and what changes the trajectory?",
+  "expected_dimensions": [
+    "interest expense trajectory vs defense/medicare budgets",
+    "CBO vs IMF vs academic debt-holding-GDP projections",
+    "buyer base shift: households/funds replacing Fed and foreigners",
+    "term premium and Treasury supply digestion (bill-heavy issuance)",
+    "rating actions and market reaction evidence",
+    "fiscal dominance vs r-vs-g debate",
+    "historical debt sustainability episodes compared"
+  ],
+  "ttl_days": 180,
+  "profile": "standard"
+}

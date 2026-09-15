@@ -1,0 +1,14 @@
+{
+  "topic": "How big is the yen carry trade after the BOJ normalization, what triggers an unwind, and what did the August 2024 episode reveal?",
+  "expected_dimensions": [
+    "carry trade size estimates and why they range wildly",
+    "BOJ policy path and terminal rate debates",
+    "August 2024 unwind post-mortem (TOBO shock, margin calls)",
+    "exposure channels: CTA de-grossing, US assets, EM funding",
+    "MOF intervention mechanics and history",
+    "second-episode vulnerability indicators",
+    "correlation regimes vs 1998 LTCM and 2007 episodes"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

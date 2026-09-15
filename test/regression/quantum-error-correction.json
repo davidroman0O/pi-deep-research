@@ -1,0 +1,13 @@
+{
+  "topic": "What is the current state of quantum error correction — how many physical qubits per logical qubit, and what milestones have been demonstrated?",
+  "expected_dimensions": [
+    "error-correction codes and overhead",
+    "demonstrated logical qubit milestones",
+    "hardware platforms compared",
+    "decoherence and gate fidelity progress",
+    "vendor roadmaps and timelines",
+    "algorithmic relevance thresholds"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

@@ -1,0 +1,13 @@
+{
+  "topic": "How much additional electrical power will AI data centers require by 2030, and where will it come from?",
+  "expected_dimensions": [
+    "load growth forecasts by region",
+    "grid interconnection queue constraints",
+    "utility deals and nuclear PPAs",
+    "on-site generation and fuel cells",
+    "efficiency gains per workload",
+    "local moratoria and permitting friction"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

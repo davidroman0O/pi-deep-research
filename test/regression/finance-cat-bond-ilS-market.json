@@ -1,0 +1,14 @@
+{
+  "topic": "How has the catastrophe bond and ILS market hardened, what does pricing say about climate model trust, and who bears the tail now?",
+  "expected_dimensions": [
+    "issuance volumes and risk-spread tightening history",
+    "climate model vs observed loss trend disagreement",
+    "Florida/state-insurer depopulation into ILS",
+    "named-peril vs peak-peril exposure concentration",
+    "reinsurance attachment point shifts",
+    "pension/asset-manager investor base growth",
+    "hurricane and wildfire loss season evidence vs pricing"
+  ],
+  "ttl_days": 365,
+  "profile": "standard"
+}

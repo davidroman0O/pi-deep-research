@@ -1,0 +1,13 @@
+{
+  "topic": "What is the current supply situation and cost structure of GLP-1 agonists (semaglutide, tirzepatide), and when will supply meet demand?",
+  "expected_dimensions": [
+    "manufacturing capacity expansions",
+    "list vs net prices and insurance coverage",
+    "compounder and generic timelines",
+    "patent expiries by jurisdiction",
+    "global supply allocation decisions",
+    "health-system cost impact estimates"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

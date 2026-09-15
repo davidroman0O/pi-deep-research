@@ -1,0 +1,14 @@
+{
+  "topic": "How much commercial real estate debt matures through 2027, which segments and lenders hold the real risk, and what are the workout paths?",
+  "expected_dimensions": [
+    "maturity wall estimates by source (MBA, MSCI, Trepp) and why they differ",
+    "office vs multifamily vs industrial delinquency splits",
+    "regional bank vs CMBS vs debt-fund lender exposure",
+    "extension-and-pretend vs true workouts",
+    "mark-to-market loss recognition lags",
+    "Workout precedent cases (Signature, WeWork, 601 Lexington)",
+    "refinance gap math at current rates"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

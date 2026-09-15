@@ -1,0 +1,14 @@
+{
+  "topic": "How deep is the private equity exit drought, how stale are NAV marks, and which LPs are most exposed?",
+  "expected_dimensions": [
+    "exit value and count vs 2021 peak (pitchbook/bain data)",
+    "denominator effect and LP allocation ceilings",
+    "NAV staleness evidence (academic mark-lag studies)",
+    "continuation vehicle proliferation and conflicts",
+    "distribution yield vs 2015-2020 norms",
+    "secondaries pricing discounts",
+    "M&A/IPO reopening evidence 2024-2026"
+  ],
+  "ttl_days": 180,
+  "profile": "standard"
+}

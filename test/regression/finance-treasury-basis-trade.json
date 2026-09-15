@@ -1,0 +1,14 @@
+{
+  "topic": "How large is the Treasury cash-futures basis trade, how levered is it, and what happens if it unwinds — again?",
+  "expected_dimensions": [
+    "size estimates (Fed OFR vs hedge fund surveys) and methods",
+    "leverage embedded via cleared vs uncleared futures positions",
+    "March 2020 unwind post-mortem and policy response",
+    "SLR exemption debate and clearing mandate expansion",
+    "prime-broker financing terms and stress telemetry",
+    "volatility triggers (MOVE index) historical episodes",
+    "official-sector monitoring and proposed reforms"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

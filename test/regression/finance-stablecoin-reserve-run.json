@@ -1,0 +1,14 @@
+{
+  "topic": "What backs the major stablecoins today, how would a run actually work, and what does the GENIUS Act change?",
+  "expected_dimensions": [
+    "reserve composition audits (Tether, Circle, others) and attestation limits",
+    "redemption mechanics and single-day run capacity",
+    "USDT/USDC depeg episode evidence (May 2022, Mar 2023)",
+    "GENIUS Act requirements and effective dates",
+    "yield-bearing stablecoin workarounds and bank lobby",
+    "Treasury bill market footprint",
+    "offshore issuers and regulatory arbitrage"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}

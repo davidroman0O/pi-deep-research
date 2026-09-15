@@ -1,0 +1,14 @@
+{
+  "topic": "How are hyperscalers financing the AI capex wave — cash, debt, SPVs and vendor financing — and where is the leverage really sitting?",
+  "expected_dimensions": [
+    "capex guidance vs depreciation schedules (MSFT/GOOG/AMZN/META)",
+    "debt issuance revival and SPV structures (e.g. data-center JVs)",
+    "circular vendor financing (chipmaker investments in customers)",
+    "credit default swap and bond market pricing of mega-cap tech",
+    "neocloud private-credit financing (CoreWeave-class)",
+    "revenue-per-capex evidence and utilization",
+    "comparison to telecom 2000 capex cycle"
+  ],
+  "ttl_days": 90,
+  "profile": "standard"
+}
