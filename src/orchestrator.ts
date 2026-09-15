@@ -876,12 +876,12 @@ async function synthesizeReport(
 			const draft = await llmText(
 				handle, SECTION_SYSTEM,
 				sectionPrompt(meta.spec!, section, hierarchyBundle, assumptions),
-				{ signal: deps.signal, temperature: 0.4, maxTokens: 4000, timeoutMs: 180_000 },
+				{ signal: deps.signal, temperature: 0.4, maxTokens: 8000, timeoutMs: 180_000 },
 			);
 			// Truncation guard: deepseek sometimes overshoots the length guidance and
 			// gets cut mid-flow at the token cap (finance run: 3 of 4 sections). One
-			// regeneration with a hard length instruction; the downstream completeness
-			// guard still drops anything that comes back half-written.
+			// regeneration FROM THE ORIGINAL BUNDLE with a hard length instruction;
+			// the downstream completeness guard still drops anything half-written.
 			const looksTruncated = (t: string) => {
 				const trimmed = t.trim();
 				return trimmed.length > 0 && !/[.!?][\s\"')]*$/.test(trimmed);
@@ -891,8 +891,9 @@ async function synthesizeReport(
 				try {
 					finalDraft = await llmText(
 						handle, SECTION_SYSTEM,
-						`Rewrite this section complete and self-contained in under 300 words, ending with a full sentence. Keep every citation [n]. Do not use tables.\n\n${draft.slice(0, 6000)}`,
-						{ signal: deps.signal, temperature: 0.2, maxTokens: 2000, timeoutMs: 180_000 },
+						sectionPrompt(meta.spec!, section, hierarchyBundle, assumptions) +
+							`\n\nHARD REQUIREMENT: complete and self-contained, under 300 words, ending with a full sentence. No tables. Cite every claim [n].`,
+						{ signal: deps.signal, temperature: 0.2, maxTokens: 4000, timeoutMs: 180_000 },
 					);
 					if (looksTruncated(finalDraft)) finalDraft = draft;
 				} catch { finalDraft = draft; }
