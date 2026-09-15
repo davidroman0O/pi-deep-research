@@ -4,15 +4,15 @@
     "coverage": 5,
     "source_quality": 4,
     "contradiction_handling": 4,
-    "factual_accuracy": 2.2839506172839505,
-    "analytical_depth": 3.350219859070546,
-    "timeliness": 4.545454545454545,
+    "factual_accuracy": 1.9577464788732395,
+    "analytical_depth": 3.0437314206251695,
+    "timeliness": 4.616438356164384,
     "structure_actionability": 5,
-    "conciseness": 2.285522788203753
+    "conciseness": 4.3016042780748664
   },
-  "composite": 3.965849983093232,
+  "composite": 3.9896379985178694,
   "passed": false,
   "hardGateViolations": [
-    "factual_accuracy 2.2839506172839505 < 3"
+    "factual_accuracy 1.9577464788732395 < 3"
   ]
 }

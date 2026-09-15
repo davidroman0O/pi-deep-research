@@ -412,19 +412,6 @@ const drWorkflowExtension = {
   headline: "pi-deep-research autoresearch",
   description: "Autonomous optimization and judging workflows for pi-deep-research.",
   functions: {
-    drPing: {
-      description: "Test function.",
-      input: {
-        type: "object",
-        properties: { name: { type: "string" } },
-        required: ["name"],
-        additionalProperties: false,
-      },
-      output: { type: "string" },
-      run(input) {
-        return "Hello, " + String(input.name) + "!";
-      },
-    },
     drOptimize,
     drJudge,
   },
