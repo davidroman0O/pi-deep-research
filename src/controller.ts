@@ -13,7 +13,8 @@ import { detectSourceFamily } from "./novel.ts";
 // ── safety constants (§2.6) ──────────────────────────────────────────────
 export const MAX_ATTEMPTS_PER_TASK = 5;
 export const MAX_ACTIONS = 500;
-export const MAX_WALLCLOCK_MS = 30 * 60_000; // 30 min
+// DR_MAX_WALLCLOCK_MS env override — long benchmark runs need headroom; default keeps the 30-min safety guard.
+export const MAX_WALLCLOCK_MS = Number(process.env.DR_MAX_WALLCLOCK_MS) || 30 * 60_000;
 export const LOW_NOVELTY_SATURATION = 5; // consecutive low-novelty → stop
 export const STOP_EIG_THRESHOLD = 0.08; // §20 — max_EIG below this → stop
 
@@ -191,10 +192,19 @@ export function guardAction(
 	action: { type: string; taskId: string },
 	task: Task,
 	budget: Budget,
+	taskSliceDeadline?: number,
 ): { type: string; taskId: string; coerced?: boolean; reason?: string } {
 	// budget exhaustion → force summarize
 	if (isBudgetExhausted(budget)) {
 		return { type: "summarize", taskId: action.taskId, coerced: true, reason: "budget exhausted" };
+	}
+
+	// wallclock slice (§14 breadth): the task's fair share of the remaining
+	// wallclock is spent → summarize, same path as every other coercion.
+	// Soft bound only: the global budget check above still wins; state machine,
+	// per-task search cap, and verify safety net are all untouched.
+	if (taskSliceDeadline !== undefined && Date.now() >= taskSliceDeadline) {
+		return { type: "summarize", taskId: action.taskId, coerced: true, reason: "task wallclock slice exceeded" };
 	}
 
 	// Search cap stops more discovery, not the verification phase it unlocks.

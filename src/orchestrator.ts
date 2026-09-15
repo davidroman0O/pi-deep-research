@@ -61,7 +61,7 @@ import { auditCitations, runStaticAudits, assembleAudit, type AuditReport } from
 import {
 	SPEC_SYSTEM, specPrompt, SPEC_TOOL,
 	DECOMPOSE_SYSTEM, decomposePrompt, DECOMPOSE_TOOL,
-	QUERY_SYSTEM, queryPrompt, QUERY_TOOL,
+	QUERY_SYSTEM, queryPrompt, queryRotationPrompt, QUERY_TOOL,
 	EXTRACT_SYSTEM, extractPrompt, EXTRACT_TOOL,
 	SOURCE_MEMO_SYSTEM, sourceMemoPrompt, SOURCE_MEMO_TOOL,
 	TASK_MEMO_SYSTEM, taskMemoPrompt, TASK_MEMO_TOOL,
@@ -121,6 +121,8 @@ export function prepareVerificationEvidence(
 }
 
 const NOVELTY_FLOOR = 0.15;
+// §20 failure-mode A: consecutive zero-ingest searches → rotate query angle.
+const ZERO_INGEST_ROTATE_AFTER = 2;
 const MAX_RELATION_CHECKS = 15;
 const MAX_TOTAL_TASKS = 40;
 const EXTRACT_CHAR_BUDGET = 14_000; // §13.2 budgeted context assembly
@@ -235,10 +237,25 @@ async function runControllerLoop(
 		await store.saveTasks(tasks);
 		progress(`[iter ${meta.stats.iterations + 1}] ${task.id}: ${task.question.slice(0, 60)}…`);
 
+		// §14 wallclock-slice breadth (run 34 lesson): one task must not eat the
+		// whole wallclock and leave later tasks summarizing with 0 evidence.
+		// Soft per-task deadline = remaining wallclock / remaining open tasks
+		// (current included), enforced at action time like every other coercion.
+		// This only ADDS a bound; global budget, search cap, safety net unchanged.
+		const sliceMs = Math.max(1, Math.floor((budget.wallclockStart + budget.maxWallclockMs - Date.now()) / Math.max(1, openTasks.length)));
+		const taskSliceDeadline = Date.now() + sliceMs;
+
 		// highest novelty among sources actually ingested this iteration (§20 saturation signal)
 		let iterationMaxNovelty = 0;
 
 		// ── TASK ACTION LOOP (§14 inner loop) ──────────────────────────
+		// Failure-mode A escalation (§20): consecutive searches that ingest
+		// nothing hold the task hostage — the warm search cache replays
+		// already-ingested URLs, every repeat is deduped away, 0 evidence, and
+		// the model re-issues the same dead queries from the same snapshot.
+		// Track the zero-ingest streak + queries tried so we can rotate.
+		let zeroIngestStreak = 0;
+		const searchedQueries: string[] = [];
 		let taskActions = 0;
 		while (true) {
 			checkAbort();
@@ -262,8 +279,8 @@ async function runControllerLoop(
 				covMatrix.openDimensions);
 			const action = await chooseAction(handle, task, snapshot, deps.signal);
 
-			// guard (state machine + safety)
-			const guarded = guardAction(action, task, budget);
+			// guard (state machine + safety + wallclock slice)
+			const guarded = guardAction(action, task, budget, taskSliceDeadline);
 			if (guarded.coerced) await store.log("action_coerced", { from: action.type, to: guarded.type, reason: guarded.reason });
 			progress(`  ▸ ${guarded.type}${guarded.coerced ? " (coerced)" : ""} — ${action.reason?.slice(0, 60) ?? ""}`);
 
@@ -273,11 +290,21 @@ async function runControllerLoop(
 			if (guarded.type === "stop" || guarded.type === "summarize") break;
 
 			if (guarded.type === "search" || guarded.type === "verify") {
-				const queries = action.queries?.length
+				const evidenceText = taskEvidence.map((e) => `- ${e.claim}`).join("\n");
+				const baseQueries = action.queries?.length
 					? action.queries.slice(0, config.max_search_queries)
 					: (await llmJson<{ queries: string[] }>(handle, QUERY_TOOL, QUERY_SYSTEM,
-						queryPrompt(task, taskEvidence.map((e) => `- ${e.claim}`).join("\n")),
+						queryPrompt(task, evidenceText),
 						{ signal: deps.signal, temperature: 0.6 })).queries.slice(0, config.max_search_queries);
+				// §20 rotation: after repeated zero-ingest searches, stop re-issuing the
+				// same dead queries — regenerate from a fresh angle with memory of what
+				// was already tried. Replaces the same budgeted query-gen call; the
+				// taskActions ceiling and search-attempt cap still bound the loop.
+				const queries = zeroIngestStreak >= ZERO_INGEST_ROTATE_AFTER && searchedQueries.length > 0
+					? (await llmJson<{ queries: string[] }>(handle, QUERY_TOOL, QUERY_SYSTEM,
+						queryRotationPrompt(task, evidenceText, searchedQueries),
+						{ signal: deps.signal, temperature: 0.7 })).queries.slice(0, config.max_search_queries)
+					: baseQueries;
 				meta.stats.searches += queries.length;
 
 				const allResults: SearchResult[] = [];
@@ -289,6 +316,7 @@ async function runControllerLoop(
 					.filter((r) => !sources.some((s) => s.url_canonical === canonicalUrl(r.url)))
 					.slice(0, config.breadth);
 				const sourceLimit = sourceLimitForAction(config.max_sources, guarded.type);
+				const evidenceBefore = taskEvidence.length;
 
 				for (const res of ranked) {
 					checkAbort();
@@ -358,6 +386,16 @@ async function runControllerLoop(
 					progress(`    +${extracted.evidence.length} evidence — ${candidatePublisher}`);
 					await store.log("action", { task: task.id, action: guarded.type, reason: action.reason, queries, source: res.url });
 				}
+
+				// §20 zero-ingest bookkeeping: remember the queries tried; a search
+				// that added no evidence for THIS task bumps the streak and the next
+				// search rotates to a fresh angle. Evidence delta is the value signal
+				// (an ingested-but-barren source still warrants rotation).
+				if (queries.length > 0) {
+					searchedQueries.push(...queries);
+					const gained = (await store.loadEvidence()).filter((e) => e.task_id === task.id).length - evidenceBefore;
+					zeroIngestStreak = gained > 0 ? 0 : zeroIngestStreak + 1;
+				}
 			}
 			taskActions++;
 			if (taskActions > MAX_ATTEMPTS_PER_TASK * 2) break;
@@ -378,17 +416,20 @@ async function runControllerLoop(
 		const allTaskEvidence = (await store.loadEvidence()).filter((e) => e.task_id === task.id);
 		const taskSourceIds = new Set(allTaskEvidence.map((e) => e.source_id));
 		const taskSourceMemos = sourceMemos.filter((m) => taskSourceIds.has(m.source_id));
-		const memoDigest = taskSourceMemos.map((m) => `- [${m.source_id}] ${m.purpose}: ${(m.key_findings ?? []).join("; ")}`).join("\n");
+		const memoDigest = taskSourceMemos.map((m) => `- [${m.source_id}] ${m.purpose}: ${asArray(m.key_findings).join("; ")}`).join("\n");
 		const memo = await llmJson<{ key_findings: string[]; limitations: string[]; open_issues: string[] }>(
 			handle, TASK_MEMO_TOOL, TASK_MEMO_SYSTEM,
 			taskMemoPrompt(task, memoDigest || allTaskEvidence.map((e) => `- ${e.claim}`).join("\n") || "(no evidence found)"),
 			{ signal: deps.signal, temperature: 0.3 });
-		taskMemos.push({ task_id: task.id, key_findings: memo.key_findings,
-			limitations: [...memo.limitations, ...memo.open_issues.map((i) => `open: ${i}`)],
+		const keyFindings = Array.isArray(memo.key_findings) ? memo.key_findings : [];
+		const limitations = Array.isArray(memo.limitations) ? memo.limitations : [];
+		const openIssues = Array.isArray(memo.open_issues) ? memo.open_issues : [];
+		taskMemos.push({ task_id: task.id, key_findings: keyFindings,
+			limitations: [...limitations, ...openIssues.map((i) => `open: ${i}`)],
 			relevant_claims: allTaskEvidence.map((e) => e.id), created_at: new Date().toISOString() });
 		await store.saveTaskMemos(taskMemos);
 
-		task.status = "done"; task.state = "complete"; task.summary = memo.key_findings[0];
+		task.status = "done"; task.state = "complete"; task.summary = keyFindings[0];
 		await store.saveTasks(tasks);
 		progress(`✓ ${task.id} done (${allTaskEvidence.length} evidence, ${task.search_attempts} actions)`);
 
@@ -398,13 +439,15 @@ async function runControllerLoop(
 		progress(`Iteration ${meta.stats.iterations}: gap check…`);
 
 		const digest = taskMemos
-			.map((m) => `- [${m.task_id}] ${m.key_findings.slice(0, 3).join("; ")}`)
+			.map((m) => `- [${m.task_id}] ${asArray(m.key_findings).slice(0, 3).join("; ")}`)
 			.join("\n");
 		const gap = await llmJson<{ gaps: string[]; new_subquestions: string[]; should_continue: boolean }>(
 			handle, GAP_TOOL, GAP_SYSTEM,
 			gapPrompt(meta.spec!, tasks, digest, "(computed after claim graph)"),
 			{ signal: deps.signal, temperature: 0.3 },
 		);
+		gap.gaps = Array.isArray(gap.gaps) ? gap.gaps : [];
+		gap.new_subquestions = Array.isArray(gap.new_subquestions) ? gap.new_subquestions : [];
 		await store.log("gap_check", gap);
 
 		// dynamic tasks depend on everything completed so far (§4.1 task graph)
@@ -461,7 +504,10 @@ async function verifySafetyNet(
 	// permanently single-sourced, capping corroboratedFraction.
 	if (singleSourced.length === 0 || sources.length >= config.max_sources - 2) return;
 	checkAbort();
-	const claimsToVerify = singleSourced.slice(0, VERIFY_SAFETY_NET_CLAIMS);
+	// §15b — scale corroboration with pool size: clamp(3, pool/6, 6). Pool was
+	// 76 claims → 3 verified; pool/6 ≈ 13 → 6. Per-attempt family checks, the
+	// source cap, and the task wallclock slice still bound each verify.
+	const claimsToVerify = singleSourced.slice(0, Math.min(6, Math.max(3, Math.ceil(singleSourced.length / 6))));
 	progress(`  ⚡ verify safety net: ${singleSourced.length} single-sourced — corroborating ${claimsToVerify.length}`);
 	let verifyClaimsTried = 0;
 	for (const claimToVerify of claimsToVerify) {
@@ -715,6 +761,44 @@ async function synthesizeReport(
 		scenarioSection = `\n\n## Scenario Model: ${sc.metric}\n\n**Base estimate:** ${sc.base_value}\n\n${header}\n${body}\n`;
 	}
 
+	// ── Phase 6e: consolidated evidence appendix (mechanical — DRH-style) ──
+	// One markdown table per spec dimension over citation-ready claims:
+	// claim | value | conditions | sources. Pure string assembly, no model
+	// calls — ledger depth already extracted surfaces deterministically,
+	// feeding fact_recall + depth_ratio without extra searches.
+	const evidenceById = new Map(allEvidence.map((e) => [e.id, e]));
+	const valueRx = /[$€£¥]\s?\d|\d[\d,.]*\s*(?:kW|MW|GW|MWh|kWh|%|bn|billion|million|USD|CAD|GBP|EUR|years?|months?|\/kW)/i;
+	let rowBudget = 60; // total appendix rows cap — bounds report length
+	const appendixTables: string[] = [];
+	for (const dim of meta.spec!.dimensions) {
+		const dimKey = dim.toLowerCase().split(" ")[0]?.slice(0, 10) ?? dim.toLowerCase();
+		const dimPrefix = dim.toLowerCase().slice(0, 8);
+		const dimClaims = claims.filter((c) => {
+			if (!c.citation_ready) return false;
+			const text = (c.text + " " + c.evidence_ids.map((eid) => evidenceById.get(eid)?.conditions ?? "").join(" ")).toLowerCase();
+			return text.includes(dimKey) || text.includes(dimPrefix);
+		});
+		if (dimClaims.length === 0) continue;
+		if (rowBudget === 0) break;
+		const taken = dimClaims.slice(0, rowBudget);
+		const header = "| Claim | Value / figure | Conditions / basis | Sources |\n|---|---|---|---|";
+		const body = taken
+			.map((c) => {
+				const evs = c.evidence_ids.map((eid) => evidenceById.get(eid)).filter((e): e is Evidence => !!e);
+				const structured = [...new Set(evs.flatMap((e) => (e.values ? Object.entries(e.values).map(([k, v]) => `${k}=${v}`) : [])))].join("; ");
+				const inline = c.text.match(valueRx)?.[0] ?? "";
+				const value = structured || inline || "—";
+				const conditions = [...new Set([...c.assumptions, ...evs.flatMap((e) => (e.conditions ? [e.conditions] : []))])].join("; ") || "—";
+				const srcNums = c.source_ids.map((sid) => sources.findIndex((s) => s.id === sid) + 1).filter((n) => n > 0);
+				const cell = (t: string) => t.replace(/\n/g, " ").replace(/\|/g, "\\|");
+				return `| ${cell(c.text)} | ${cell(value)} | ${cell(conditions)} | ${srcNums.map((n) => `[${n}]`).join(" ")} |`;
+			})
+			.join("\n");
+		appendixTables.push(`### ${dim}\n${header}\n${body}`);
+		rowBudget -= taken.length;
+	}
+	const evidenceAppendix = appendixTables.length > 0 ? `\n\n## Consolidated Evidence Tables\n\n${appendixTables.join("\n\n")}` : "";
+
 	// ── Phase 7: sectioned synthesis ───────────────────────────────────
 	checkAbort();
 	progress("Designing report outline…");
@@ -776,7 +860,7 @@ async function synthesizeReport(
 				s.dimension.toLowerCase().includes(sectionKey) || section.title.toLowerCase().includes(s.dimension.toLowerCase().slice(0, 10)),
 			);
 			const relevantMemos = taskMemos
-				.filter((m) => m.key_findings.some((f) => f.toLowerCase().includes(sectionKey) ||
+				.filter((m) => asArray(m.key_findings).some((f) => f.toLowerCase().includes(sectionKey) ||
 					section.title.toLowerCase().split(" ").some((w) => w.length > 4 && f.toLowerCase().includes(w))))
 				.slice(0, 4);
 
@@ -831,22 +915,30 @@ async function synthesizeReport(
 	progress("Running citation + quality audits…");
 	let citationAudit = await auditCitations(handle, report, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
 
-	// repair pass: re-cite or hedge failed citations instead of just flagging
+	// Robust repair loop: each round re-cites or hedges the failures that
+	// still stand, then re-audits. Continue while the failure count shrinks;
+	// stop early when a round applies nothing (stuck matching) or the
+	// re-audit no longer decreases (repair churn). Bounded to 3 rounds.
 	let finalReport = report;
 	let citationsRepaired = 0;
-	if (citationAudit.failures.length > 0) {
-		progress(`Repairing ${citationAudit.failures.length} failed citations…`);
+	let repairAttempted = 0;
+	const keptSentences = new Set<string>(); // reviewer-cleared false positives survive every round
+	const maxRepairRounds = 3;
+	for (let round = 1; round <= maxRepairRounds && citationAudit.failures.length > 0; round++) {
+		progress(`Repairing ${citationAudit.failures.length} failed citations (round ${round}/${maxRepairRounds})…`);
 		const failureDigest = citationAudit.failures
 			.map((f) => `- SENTENCE: ${f.sentence.slice(0, 200)}\n  CITED: ${f.citation} | PROBLEM: ${f.problem.slice(0, 150)}`)
 			.join("\n");
 		const srcListForRepair = sources.map((s, i) => `[${i + 1}] ${s.title} — ${s.url}`).join("\n");
-		const { repairs } = await llmJson<{ repairs: Array<{ sentence_prefix: string; action: "recite" | "drop_citation" | "keep"; new_citation?: number; reason: string }> }>(
+		const parsed = await llmJson<{ repairs: Array<{ sentence_prefix: string; action: "recite" | "drop_citation" | "keep"; new_citation?: number; reason: string }> }>(
 			handle, CITATION_REPAIR_TOOL, CITATION_REPAIR_SYSTEM,
 			citationRepairPrompt(failureDigest, srcListForRepair),
 			{ signal: deps.signal, temperature: 0.2 },
 		);
+		// fail-soft: an off-schema repair payload (or prose fallback) means "no repairs this round"
+		const repairs = Array.isArray(parsed?.repairs) ? parsed.repairs : [];
+		repairAttempted += repairs.length;
 		let repaired = 0;
-		const keptSentences = new Set<string>();
 		// The repair model paraphrases prefixes — match on normalized token
 		// overlap instead of exact substring.
 		const toks = (s: string) => new Set(s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((t) => t.length > 3));
@@ -884,13 +976,16 @@ async function synthesizeReport(
 		}
 		// remove reviewer-cleared items from the failure list
 		citationAudit.failures = citationAudit.failures.filter((f) => !keptSentences.has(f.sentence));
-		if (repaired > 0) {
-			citationAudit = await auditCitations(handle, finalReport, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
-			citationAudit.failures = citationAudit.failures.filter((f) => !keptSentences.has(f.sentence));
-		}
-		await store.log("citation_repair", { attempted: repairs.length, applied: repaired, cleared: keptSentences.size });
-		citationsRepaired = repaired;
+		citationsRepaired += repaired;
+		if (repaired === 0) break; // nothing applied — further rounds won't help
+		const previousFailures = citationAudit.failures.length;
+		const reAudit = await auditCitations(handle, finalReport, sources, allEvidence, deps.signal, config.citation_checks ?? 25);
+		reAudit.failures = reAudit.failures.filter((f) => !keptSentences.has(f.sentence));
+		citationAudit = reAudit;
+		// stop when re-audit shows no net improvement — repairs are churning
+		if (reAudit.failures.length >= previousFailures) break;
 	}
+	await store.log("citation_repair", { attempted: repairAttempted, applied: citationsRepaired, cleared: keptSentences.size });
 
 	const staticAudits = runStaticAudits({
 		spec: meta.spec!,
@@ -910,8 +1005,8 @@ async function synthesizeReport(
 	const auditNote = audit.overall_pass ? "" : `\n\n---\n\n## Audit warnings\n${renderAuditWarnings(audit)}`;
 	// numeric tables belong before the Sources list, not after it
 	let assembled = finalReport;
-	if (numericSection || scenarioSection) {
-		const insert = numericSection + scenarioSection;
+	if (numericSection || scenarioSection || evidenceAppendix) {
+		const insert = numericSection + scenarioSection + evidenceAppendix;
 		assembled = /\n## Sources/.test(assembled)
 			? assembled.replace(/\n## Sources/, insert + "\n\n## Sources")
 			: assembled + insert;
@@ -1058,6 +1153,11 @@ function prioritizePairs(claims: Claim[], sources: Source[]): Array<[Claim, Clai
 /** Remove leading markdown heading lines from a draft (the assembler imposes canonical ones). */
 function stripLeadingHeadings(text: string): string {
 	return text.replace(/^(?:#{1,4}\s+[^\n]*\n+)+/, "");
+}
+
+/** Memo LLM fields arrive as arrays per schema — occasionally as strings. Trust arrays only. */
+function asArray(v: unknown): string[] {
+	return Array.isArray(v) ? v as string[] : [];
 }
 
 /** Swap the LAST [oldN] citation in a report line; null when the citation is absent. */

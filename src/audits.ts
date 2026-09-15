@@ -88,14 +88,24 @@ export async function auditCitations(
 		const ranked = rankEvidenceForSentence(sc.sentence, srcEvidence).slice(0, 2);
 		const best = ranked[0];
 		const bundle = ranked.map((e) => `claim: ${e.claim}\nquote: ${e.quote}`).join("\n---\n");
-		const verdict = await llmJson<{ entailed: boolean; problem?: string }>(
-			handle,
-			ENTAIL_TOOL,
-			ENTAIL_SYSTEM,
-			entailPrompt(sc.sentence, best.claim, bundle),
-			{ signal, temperature: 0 },
-		);
-		if (!verdict.entailed) {
+		// Fail-soft: a judge call that errors or rambles past the token cap (deepseek
+		// reasoning tokens count toward the output budget) becomes a flagged failure,
+		// never a crashed run.
+		let verdict: { entailed: boolean; problem?: string };
+		try {
+			verdict = await llmJson<{ entailed: boolean; problem?: string }>(
+				handle,
+				ENTAIL_TOOL,
+				ENTAIL_SYSTEM,
+				entailPrompt(sc.sentence, best.claim, bundle),
+				{ signal, temperature: 0 },
+			);
+		} catch (err) {
+			if (signal?.aborted) throw err;
+			failures.push({ sentence: sc.sentence, raw: sc.raw, citation: `[${sc.citationNum}]`, citationNum: sc.citationNum, problem: `entailment judge unavailable: ${String((err as Error).message).slice(0, 120)}` });
+			continue;
+		}
+		if (verdict && !verdict.entailed) {
 			failures.push({ sentence: sc.sentence, raw: sc.raw, citation: `[${sc.citationNum}]`, citationNum: sc.citationNum, problem: verdict.problem ?? "not entailed" });
 		}
 	}

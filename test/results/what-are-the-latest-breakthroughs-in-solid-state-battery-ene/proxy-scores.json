@@ -1,0 +1,18 @@
+{
+  "scores": {
+    "citation_integrity": 4,
+    "coverage": 5,
+    "source_quality": 4,
+    "contradiction_handling": 4,
+    "factual_accuracy": 2.052631578947368,
+    "analytical_depth": 2.660964047443681,
+    "timeliness": 5,
+    "structure_actionability": 4.6,
+    "conciseness": 2.550387596899225
+  },
+  "composite": 3.7010938980066186,
+  "passed": false,
+  "hardGateViolations": [
+    "factual_accuracy 2.052631578947368 < 3"
+  ]
+}

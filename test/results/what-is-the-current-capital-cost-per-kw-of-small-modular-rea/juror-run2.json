@@ -1,0 +1,66 @@
+{
+  "scores": [
+    {
+      "criterion": "factual_accuracy",
+      "score_a": 5,
+      "score_b": 3,
+      "justification": "A carefully separates overnight/all-in/programme with strong caveats; B has questionable extrapolations and category mixing"
+    },
+    {
+      "criterion": "citation_integrity",
+      "score_a": 5,
+      "score_b": 3,
+      "justification": "A citations consistently attached with scope limits; B uneven, claims stronger than cited evidence"
+    },
+    {
+      "criterion": "source_quality",
+      "score_a": 5,
+      "score_b": 3,
+      "justification": "A prioritizes DOE/utilities/vendors/regulators; B leans on secondary analyses"
+    },
+    {
+      "criterion": "coverage",
+      "score_a": 5,
+      "score_b": 3,
+      "justification": "A fully answers FOAK/NOAK, overnight/all-in, projects, vendors, uncertainty, LCOE; B leaves major sections incomplete"
+    },
+    {
+      "criterion": "contradiction_handling",
+      "score_a": 5,
+      "score_b": 3,
+      "justification": "A explains why 2k and 20k figures coexist and are incomparable; B selects benchmarks rather than reconciling"
+    },
+    {
+      "criterion": "analytical_depth",
+      "score_a": 5,
+      "score_b": 4,
+      "justification": "A synthesis on scope boundaries, financing sensitivity, learning curves; B useful scenario modeling but less rigorous"
+    },
+    {
+      "criterion": "timeliness",
+      "score_a": 5,
+      "score_b": 5,
+      "justification": "Both use current 2025-2026 developments"
+    },
+    {
+      "criterion": "structure_actionability",
+      "score_a": 5,
+      "score_b": 4,
+      "justification": "A decision-useful ranges/tables/definitions; B useful investment framing, less polished"
+    },
+    {
+      "criterion": "conciseness",
+      "score_a": 2,
+      "score_b": 4,
+      "justification": "A overlong/repetitive; B more concise despite incompleteness"
+    }
+  ],
+  "composite_a": 4.85,
+  "composite_b": 3.25,
+  "preference": "A",
+  "confidence": "high",
+  "key_strengths_a": [],
+  "key_weaknesses_a": [],
+  "key_strengths_b": [],
+  "key_weaknesses_b": []
+}

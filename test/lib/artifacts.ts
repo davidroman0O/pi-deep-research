@@ -36,6 +36,11 @@ export async function saveReport(
 ): Promise<void> {
 	const filename = source === "ours" ? "ours_report.md" : "drh_report.md";
 	await writeFile(join(dir, filename), text, "utf8");
+	// conservation: timestamped archive — later runs must never overwrite prior reports
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const histDir = join(dir, "history");
+	await mkdir(histDir, { recursive: true });
+	await writeFile(join(histDir, `${source}-${stamp}.md`), text, "utf8");
 }
 
 export async function loadReport(
