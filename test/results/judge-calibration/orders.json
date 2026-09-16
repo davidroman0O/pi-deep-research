@@ -1,0 +1,18 @@
+{
+  "verbosity-padding": {
+    "A": "degraded",
+    "B": "strong"
+  },
+  "citation-padding": {
+    "A": "strong",
+    "B": "degraded"
+  },
+  "unit-confusion": {
+    "A": "strong",
+    "B": "degraded"
+  },
+  "source-degradation": {
+    "A": "degraded",
+    "B": "strong"
+  }
+}

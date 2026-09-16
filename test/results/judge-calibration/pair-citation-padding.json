@@ -1,0 +1,4 @@
+{
+  "name": "citation-padding",
+  "expect": "degraded must score <= strong on citation_integrity"
+}

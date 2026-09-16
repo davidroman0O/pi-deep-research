@@ -1,0 +1,4 @@
+{
+  "name": "verbosity-padding",
+  "expect": "degraded must score <= strong on conciseness; composites within 0.3 otherwise"
+}

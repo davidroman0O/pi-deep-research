@@ -1,0 +1,4 @@
+{
+  "name": "unit-confusion",
+  "expect": "degraded must score <= strong - 1 on factual_accuracy"
+}

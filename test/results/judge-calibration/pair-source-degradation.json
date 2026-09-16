@@ -1,0 +1,4 @@
+{
+  "name": "source-degradation",
+  "expect": "degraded must score <= strong on source_quality"
+}
