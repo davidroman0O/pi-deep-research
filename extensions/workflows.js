@@ -468,6 +468,17 @@ const drWorkflowExtension = {
   },
 };
 
+// Idempotent registration: this extension can load more than once per process
+// (repo checkout + globally installed copy both point at the same functions),
+// and the workflow registry keys function names globally. Re-registration must
+// be a harmless no-op, never a load failure.
 export default function extension() {
-  registerWorkflowExtension(drWorkflowExtension);
+  if (globalThis.__piDeepResearchWorkflowsRegistered) return;
+  globalThis.__piDeepResearchWorkflowsRegistered = true;
+  try {
+    registerWorkflowExtension(drWorkflowExtension);
+  } catch (err) {
+    // Already registered by a sibling copy in this process — first load wins.
+    if (!/already registered/i.test(String(err))) throw err;
+  }
 }
