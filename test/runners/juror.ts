@@ -264,6 +264,9 @@ export function aggregateVerdict(
 			ratio < threshold.ratio && `composite ratio ${ratio.toFixed(2)} < ${threshold.ratio}`,
 		].filter(Boolean).join("; ") || "Unknown failure";
 
+	// provenance (DRH review 5): make the aggregation auditable — the formula is a
+	// rubric-weighted mean of PER-CRITERION cross-run averages. Juror self-reported
+	// composites use their own rounding/weighting and will legitimately differ.
 	return {
 		pass,
 		ours_composite: oursComposite,
@@ -272,6 +275,12 @@ export function aggregateVerdict(
 		critical_failures: criticalFailures as Criterion[],
 		preference_runs: preferenceRuns,
 		per_criterion: perCriterion,
+		provenance: {
+			formula: "rubric-weighted mean of per-criterion cross-run averages",
+			weights: { ...RUBRIC_WEIGHTS },
+			run_composites: [run1, run2].map((r) => ({ composite_a: r.composite_a, composite_b: r.composite_b, preference: r.preference, confidence: r.confidence })),
+			note: "juror self-reported composites use their own rounding/weighting and will legitimately differ from ours/drh_composite",
+		},
 		rationale,
 		timestamp: new Date().toISOString(),
 	};

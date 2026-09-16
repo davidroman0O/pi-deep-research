@@ -176,27 +176,41 @@ export function proxyScores(m: RunMetrics, report?: string, reference?: string):
 
 // ── reference-relative fact extraction (reverse-engineering DRH) ─────────
 
-/** Distinctive numeric facts from the reference: currency/power/percent magnitudes (years excluded). */
-function extractReferenceFacts(reference: string): number[] {
-	const seen = new Set<number>();
+interface ReferenceFact { value: number; unit: string }
+
+/** Distinctive numeric facts WITH their unit context: $/kW, /MWh, %, bn, MW… (years excluded).
+ * DRH review 5 P1: bare-number recall is unit/basis-blind ($4,000M must never match $4,000/kW). */
+function extractReferenceFacts(reference: string): ReferenceFact[] {
+	const seen = new Map<string, number>();
 	for (const match of reference.matchAll(/([$€£]|USD\s?|CAD\s?|C\$)?\s?(\d[\d,]*)(?:\.\d+)?\s?(kW\w*|\/kW\w*|\/MWh|MW\b|GW\b|billion|million|bn|%|MWh)?/gi)) {
 		const raw = match[2].replace(/,/g, "");
 		const n = Number(raw);
 		// distinctive magnitudes only: skip years, small counts, page numbers
 		if (Number.isNaN(n) || n < 100 || n > 1e12) continue;
 		if (/^(18|19|20|21)\d{2}$/.test(raw)) continue;
-		seen.add(n);
+		const currency = (match[1] ?? "").trim().toLowerCase();
+		const unit = ((match[3] ?? "") + " " + currency).trim().toLowerCase();
+		const key = n + "|" + unit;
+		if (!seen.has(key)) seen.set(key, n);
 		if (seen.size >= 60) break;
 	}
-	return [...seen];
+	return [...seen.entries()].map(([key, value]) => ({ value, unit: key.split("|")[1] }));
 }
 
-/** Does ours contain this value (±5%)? Guards against reformatting (commas, k/bn scales). */
-function hasValueNear(report: string, value: number): boolean {
+/** Does ours contain this value NEAR ITS UNIT CONTEXT (±5%, same-line window)?
+ * DRH review 5: bare-number matching is dimensionally blind ($4,000M must never match $4,000/kW).
+ * A match requires the reference fact's unit token to co-occur in the matching line. */
+function hasValueNear(report: string, fact: { value: number; unit: string }): boolean {
 	const normalized = report.replace(/,/g, "");
-	for (const match of normalized.matchAll(/\d+(?:\.\d+)?/g)) {
-		const n = Number(match[0]);
-		if (n > 0 && Math.abs(n - value) / Math.max(value, n) < 0.05) return true;
+	for (const line of normalized.split("\n")) {
+		for (const match of line.matchAll(/\d+(?:\.\d+)?/g)) {
+			const n = Number(match[0]);
+			if (n > 0 && Math.abs(n - fact.value) / Math.max(fact.value, n) < 0.05) {
+				if (!fact.unit) return true;
+				const window = line.slice(Math.max(0, (match.index ?? 0) - 40), (match.index ?? 0) + 60).toLowerCase();
+				if (window.includes(fact.unit)) return true;
+			}
+		}
 	}
 	return false;
 }

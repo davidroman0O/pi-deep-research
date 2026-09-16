@@ -70,6 +70,13 @@ export interface Verdict {
 	per_criterion: PerCriterionResult[];
 	rationale: string;
 	timestamp: string;
+	/** Aggregation provenance (DRH review 5): makes the headline score reconstructible. */
+	provenance?: {
+		formula: string;
+		weights: Record<string, number>;
+		run_composites: Array<{ composite_a?: number; composite_b?: number; preference: string; confidence: string }>;
+		note: string;
+	};
 }
 
 // ── test config ──────────────────────────────────────────────────────────
