@@ -22,6 +22,8 @@ export interface ResearchMetrics {
 	corroboratedFraction: number;
 	contradictionsDetected: number;
 	contradictionsAcknowledged: boolean;
+	/** contradicts+qualifies graph edges — discovery is denominator-anchored (DRH review 6), NOT composite-weighted. */
+	disagreement_discovered_count: number;
 	dimensionsCovered: number;
 	dimensionsTotal: number;
 	citationPassRate: number; // 1 - failures/checked
@@ -134,6 +136,7 @@ export function computeMetrics(
 		corroboratedFraction: claims.length > 0 ? corroborated / claims.length : 0,
 		contradictionsDetected: contradictions.length,
 		contradictionsAcknowledged: audit.contradiction_audit.acknowledged,
+		disagreement_discovered_count: edges.filter((e) => e.relation === "contradicts" || e.relation === "qualifies").length,
 		dimensionsCovered: audit.coverage.covered.length,
 		dimensionsTotal: audit.coverage.covered.length + audit.coverage.uncovered.length,
 		citationPassRate: citationChecked > 0 ? 1 - citationFailures / citationChecked : 1,

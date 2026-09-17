@@ -125,6 +125,8 @@ export interface RunMeta {
 		searches: number;
 		sources_ingested: number;
 		evidence_extracted: number;
+		/** Sources whose extraction returned the maxItems cap (saturation telemetry, DRH review 6). */
+		extraction_cap_hits: number;
 		iterations: number;
 	};
 }

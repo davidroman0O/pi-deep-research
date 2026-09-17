@@ -101,6 +101,8 @@ async function main() {
 	// Raw deterministic metrics
 	console.log(`METRIC sources=${result.metrics.sources}`);
 	console.log(`METRIC corroboration=${result.metrics.corroboratedFraction.toFixed(4)}`);
+	console.log(`METRIC extraction_cap_hits=${result.metrics.extractionCapHits}`);
+	console.log(`METRIC disagreement_discovered=${result.metrics.disagreementDiscoveredCount}`);
 	console.log(`METRIC citation_pass_rate=${result.metrics.citationPassRate.toFixed(4)}`);
 	console.log(`METRIC coverage=${result.metrics.dimensionsTotal > 0 ? (result.metrics.dimensionsCovered / result.metrics.dimensionsTotal).toFixed(4) : "0"}`);
 

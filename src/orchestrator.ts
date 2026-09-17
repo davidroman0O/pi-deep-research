@@ -349,6 +349,7 @@ async function runControllerLoop(
 						extractPrompt(task, doc.title, doc.url, wrapped), { signal: deps.signal, temperature: 0.2 });
 
 					const evidenceList = Array.isArray(extracted?.evidence) ? extracted.evidence : [];
+					if (evidenceList.length >= 8) meta.stats.extraction_cap_hits++;
 					if (evidenceList.length === 0) { await store.log("no_evidence", { url: res.url, task: task.id }); continue; }
 
 					const features = assessSourceQuality({ url: res.url, title: doc.title, contentType: doc.contentType,
@@ -563,10 +564,9 @@ async function verifySafetyNet(
 			const vwrapped = wrapUntrusted(`${vdoc.title} (${res.url})`, assembleContext(vselected), vdoc.trust);
 			const vextracted = await llmJson<ExtractToolArgs>(handle, EXTRACT_TOOL, EXTRACT_SYSTEM,
 				extractPrompt(verifyTask, vdoc.title, res.url, vwrapped), { signal: deps.signal, temperature: 0.2 });
-			const vlist = prepareVerificationEvidence(
-				Array.isArray(vextracted?.evidence) ? vextracted.evidence : [],
-				targetPropositionKey,
-			);
+			const vraw = Array.isArray(vextracted?.evidence) ? vextracted.evidence : [];
+			if (vraw.length >= 8) meta.stats.extraction_cap_hits++;
+			const vlist = prepareVerificationEvidence(vraw, targetPropositionKey);
 			if (vlist.length === 0) continue;
 			const vfeatures = assessSourceQuality({ url: res.url, title: vdoc.title, contentType: vdoc.contentType, kind: vdoc.kind, text: vdoc.text, date: vdoc.date, topicKeywords: ctx.topicKeywords });
 			const vcomposite = compositeQuality(vfeatures);
@@ -1089,7 +1089,7 @@ export async function runResearch(
 			created_at: new Date().toISOString(),
 			status: "running",
 			config,
-			stats: { searches: 0, sources_ingested: 0, evidence_extracted: 0, iterations: 0 },
+			stats: { searches: 0, sources_ingested: 0, evidence_extracted: 0, extraction_cap_hits: 0, iterations: 0 },
 		};
 	}
 	await store.saveMeta(meta);

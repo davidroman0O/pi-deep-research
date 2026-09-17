@@ -113,6 +113,8 @@ export interface RunMetrics {
 	dimensionsTotal: number;
 	citationPassRate: number;
 	publisherConcentration: number;
+	extractionCapHits: number;
+	disagreementDiscoveredCount: number;
 }
 
 // ── gate / threshold ─────────────────────────────────────────────────────

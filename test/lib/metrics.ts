@@ -58,6 +58,8 @@ export async function computeRunMetrics(cwd: string): Promise<RunMetrics | null>
 		dimensionsTotal: m.dimensionsTotal,
 		citationPassRate: m.citationPassRate,
 		publisherConcentration: m.publisherConcentration,
+		extractionCapHits: meta.stats?.extraction_cap_hits ?? 0,
+		disagreementDiscoveredCount: m.disagreement_discovered_count,
 	};
 }
 
